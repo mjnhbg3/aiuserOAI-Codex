@@ -155,15 +155,21 @@ class Dispatcher:
                 optin_by_default=bool(gconf.get("optin_by_default", True)),
             )
             msgs = build_messages(system_prompt, history, content)
+            # Determine vector store availability; disable file_search tool if none
+            vector_store_id = gconf.get("file_kb_id") or None
+            effective_tools = dict(gconf["tools"])  # shallow copy
+            if effective_tools.get("file_search") and not vector_store_id:
+                effective_tools["file_search"] = False
+
             options = ChatOptions(
                 model=gconf["model"],
-                tools=gconf["tools"],
+                tools=effective_tools,
                 reasoning=gconf["reasoning"],
                 max_tokens=gconf["max_tokens"],
                 temperature=gconf["temperature"],
                 system_prompt=gconf["system_prompt"],
                 file_ids=gconf.get("file_ids") or None,
-                vector_store_id=gconf.get("file_kb_id") or None,
+                vector_store_id=vector_store_id,
             )
 
             sent_msg: Optional[discord.Message] = None

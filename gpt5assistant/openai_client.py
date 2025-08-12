@@ -97,9 +97,12 @@ class OpenAIClient:
                 for fid in options.file_ids
             ]
 
+        # Only enable file_search input_file parts when we actually have a vector store
+        enable_fs = bool(options.tools.get("file_search") and options.vector_store_id)
+
         async with self.client.responses.stream(
             model=options.model,
-            input=self._to_input(messages, file_ids=options.file_ids, enable_file_search=bool(options.tools.get("file_search"))),
+            input=self._to_input(messages, file_ids=options.file_ids, enable_file_search=enable_fs),
             tools=self._tools_array(options.tools, vector_store_id=options.vector_store_id),
             reasoning={"effort": options.reasoning},
             max_output_tokens=options.max_tokens,
