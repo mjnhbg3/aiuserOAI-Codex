@@ -79,7 +79,7 @@ class OpenAIClient:
                 for fid in options.file_ids
             ]
 
-        stream = await self.client.responses.stream(
+        async with self.client.responses.stream(
             model=options.model,
             input=self._to_input(messages),
             tools=self._tools_array(options.tools),
@@ -87,9 +87,8 @@ class OpenAIClient:
             max_output_tokens=options.max_tokens,
             temperature=options.temperature,
             attachments=attachments,
-        )
-        async with stream as s:
-            async for text in self._iter_text_from_stream(s):
+        ) as stream:
+            async for text in self._iter_text_from_stream(stream):
                 yield text
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
