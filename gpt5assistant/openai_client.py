@@ -79,15 +79,18 @@ class OpenAIClient:
                 for fid in options.file_ids
             ]
 
-        stream = await self.client.responses.stream(
+        kwargs = dict(
             model=options.model,
             input=self._to_input(messages),
             tools=self._tools_array(options.tools),
             reasoning={"effort": options.reasoning},
             max_output_tokens=options.max_tokens,
             temperature=options.temperature,
-            attachments=attachments,
         )
+        if attachments:
+            kwargs["attachments"] = attachments
+
+        stream = await self.client.responses.stream(**kwargs)
         async with stream as s:
             async for text in self._iter_text_from_stream(s):
                 yield text
