@@ -7,7 +7,7 @@ from redbot.core import checks, commands, Config
 
 from .config_schemas import DEFAULT_GUILD_CONFIG
 from .dispatcher import Dispatcher
-from .openai_client import OpenAIClient
+OpenAIClient = None  # lazy import to avoid load-time failures if deps missing
 
 
 class GPT5Assistant(commands.Cog):
@@ -24,7 +24,13 @@ class GPT5Assistant(commands.Cog):
         if self._client is None:
             tokens = await self.bot.get_shared_api_tokens("openai")
             api_key = tokens.get("api_key") if tokens else None
-            self._client = OpenAIClient(api_key=api_key)
+            try:
+                from .openai_client import OpenAIClient as _Client
+            except Exception as e:
+                raise RuntimeError(
+                    "OpenAI client unavailable. Ensure 'openai>=1.99.0' is installed via [p]pipinstall and reload."
+                ) from e
+            self._client = _Client(api_key=api_key)
         return self._client
 
     async def _ensure_dispatcher(self) -> Dispatcher:
@@ -320,11 +326,12 @@ class GPT5Assistant(commands.Cog):
         # File Search / KB summary
         kb_id = g.get("file_kb_id")
         file_ids = g.get("file_ids", [])
+        vs_status = "set" if kb_id else "none"
         embed.add_field(
             name="Knowledge Base",
             value=(
-                f"vector_store_id={`set` if kb_id else '`none`'}\n"
-                f"file_ids_count=`{len(file_ids)}`"
+                f"vector_store_id={vs_status}\n"
+                f"file_ids_count={len(file_ids)}"
             ),
             inline=True,
         )
