@@ -118,18 +118,35 @@ class OpenAIClient:
             tool_choice="auto",
             instructions=options.system_prompt,
         )
-        text = getattr(resp, "output_text", None)
+        # Extract output text robustly across SDK variants
+        text = None
+        try:
+            ot = getattr(resp, "output_text", None)
+            if isinstance(ot, str) and ot.strip():
+                text = ot
+        except Exception:
+            text = None
         if not text:
-            # Fallback: extract from structured output
             try:
-                parts = []
-                for msg in getattr(resp, "output", []) or []:
-                    role = getattr(msg, "role", None)
-                    if role == "assistant":
-                        for c in getattr(msg, "content", []) or []:
+                parts: list[str] = []
+                out = getattr(resp, "output", None)
+                if isinstance(out, list):
+                    for msg in out:
+                        content = getattr(msg, "content", None)
+                        if content is None and isinstance(msg, dict):
+                            content = msg.get("content")
+                        if not isinstance(content, list):
+                            continue
+                        for c in content:
                             ctype = getattr(c, "type", None)
+                            if ctype is None and isinstance(c, dict):
+                                ctype = c.get("type")
                             if ctype == "output_text":
-                                parts.append(getattr(c, "text", ""))
+                                txt = getattr(c, "text", None)
+                                if txt is None and isinstance(c, dict):
+                                    txt = c.get("text")
+                                if txt:
+                                    parts.append(txt)
                 text = "".join(parts)
             except Exception:
                 text = ""
