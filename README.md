@@ -41,6 +41,7 @@ A production-ready Red-DiscordBot cog that replaces aiuser with a new OpenAI Res
 - `[p]gpt5 config model <name>`
 - `[p]gpt5 config verbosity <low|medium|high>`
 - `[p]gpt5 config reasoning <minimal|medium|high>`
+  - These map to Responses API controls: `text.verbosity` and `reasoning.effort`.
 - `[p]gpt5 config tools <enable|disable> <web_search|file_search|code_interpreter|image>`
 - `[p]gpt5 config channels <allow|deny> [#channel]`
 - `[p]gpt5 config system <prompt>`

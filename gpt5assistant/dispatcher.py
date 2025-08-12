@@ -176,7 +176,7 @@ class Dispatcher:
                 # If filters present, disable streaming and send once after cleanup
                 if patterns:
                     async with message.channel.typing():
-                        stream = await self.client.respond_chat(msgs, options)
+                        stream = self.client.respond_chat(msgs, options)
                         full_text = []
                         async for t in stream:
                             full_text.append(t)
@@ -196,7 +196,7 @@ class Dispatcher:
                 else:
                     # Show typing while we stream
                     async with message.channel.typing():
-                        stream = await self.client.respond_chat(msgs, options)
+                        stream = self.client.respond_chat(msgs, options)
                         await stream_text_buffered(stream, flush_cb, interval=0.4, max_buffer=1500)
             except Exception as e:
                 await message.channel.send(f"Sorry, I hit an error: {e}")
