@@ -43,7 +43,7 @@ class GPT5Assistant(commands.Cog):
         g = await self.config.guild(ctx.guild).all()
         tools = ", ".join([k for k, v in g["tools"].items() if v]) or "none"
         await ctx.send(
-            f"Model: {g['model']}\nVerbosity: {g['verbosity']}\nReasoning: {g['reasoning']}\n"
+            f"Model: {g['model']}\nReasoning: {g['reasoning']}\n"
             f"Tools: {tools}\nMax tokens: {g['max_tokens']} Temp: {g['temperature']}\n"
             f"Ephemeral: {g['ephemeral']} Allowed channels: {len(g['allowed_channels'])}\n"
             f"Respond on mention: {g.get('respond_on_mention', True)}\n"
@@ -62,14 +62,7 @@ class GPT5Assistant(commands.Cog):
         await self.config.guild(ctx.guild).model.set(name)
         await ctx.send(f"Model set to {name}.")
 
-    @gpt5_config.command(name="verbosity")
-    async def gpt5_config_verbosity(self, ctx: commands.Context, level: str) -> None:
-        level = level.lower()
-        if level not in {"low", "medium", "high"}:
-            await ctx.send("Verbosity must be low|medium|high.")
-            return
-        await self.config.guild(ctx.guild).verbosity.set(level)
-        await ctx.send(f"Verbosity set to {level}.")
+    # Verbosity setting removed; Responses API no longer uses this parameter.
 
     @gpt5_config.command(name="reasoning")
     async def gpt5_config_reasoning(self, ctx: commands.Context, effort: str) -> None:

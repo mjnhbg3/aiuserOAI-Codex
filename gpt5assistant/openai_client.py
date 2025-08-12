@@ -14,7 +14,6 @@ class ChatOptions:
     model: str
     tools: Dict[str, bool]
     reasoning: str
-    verbosity: str
     max_tokens: int
     temperature: float
     system_prompt: str

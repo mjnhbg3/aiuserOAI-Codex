@@ -39,7 +39,6 @@ class ChatOptions:
     model: str
     tools: dict
     reasoning: str
-    verbosity: str
     max_tokens: int
     temperature: float
     system_prompt: str

@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional, TypedDict
 
 class ChannelOverrides(TypedDict, total=False):
     model: str
-    verbosity: str
     reasoning: str
     tools: Dict[str, bool]
     system_prompt: str
@@ -16,7 +15,6 @@ class ChannelOverrides(TypedDict, total=False):
 
 class GuildConfig(TypedDict, total=False):
     model: str
-    verbosity: str
     reasoning: str
     tools: Dict[str, bool]
     allowed_channels: List[int]
@@ -60,13 +58,12 @@ DEFAULT_TOOLS: Dict[str, bool] = {
 
 DEFAULT_GUILD_CONFIG: GuildConfig = {
     "model": "gpt-5",
-    "verbosity": "medium",
     "reasoning": "medium",
     "tools": DEFAULT_TOOLS.copy(),
     "allowed_channels": [],
     "system_prompt": (
         "You are GPT-5, a helpful assistant for this Discord server. "
-        "Keep replies concise unless verbosity is set high."
+        "Keep replies concise."
     ),
     "max_tokens": 800,
     "temperature": 0.7,

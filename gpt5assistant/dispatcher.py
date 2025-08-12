@@ -159,7 +159,6 @@ class Dispatcher:
                 model=gconf["model"],
                 tools=gconf["tools"],
                 reasoning=gconf["reasoning"],
-                verbosity=gconf["verbosity"],
                 max_tokens=gconf["max_tokens"],
                 temperature=gconf["temperature"],
                 system_prompt=gconf["system_prompt"],
