@@ -25,6 +25,7 @@ class Dispatcher:
         self.config = config
         self.client = client
         self._locks: dict[int, asyncio.Lock] = {}
+        self._last_intent_warn: dict[int, float] = {}
 
     def _get_lock(self, channel_id: int) -> asyncio.Lock:
         if channel_id not in self._locks:
@@ -51,11 +52,6 @@ class Dispatcher:
         except Exception:
             prefixes = []
         if any(message.content.startswith(p) for p in prefixes if isinstance(p, str)):
-            return
-
-        content = message.content or ""
-        content = content.strip()
-        if not content:
             return
 
         # Decide whether to reply: mention, replies, RNG, or reply_percent
@@ -87,6 +83,21 @@ class Dispatcher:
         )
         if not should_reply:
             return
+
+        content = (message.content or "").strip()
+        if not content:
+            # Likely Message Content Intent not enabled; warn sparingly
+            now = asyncio.get_event_loop().time()
+            last = self._last_intent_warn.get(guild.id, 0.0)
+            if now - last > 300:  # 5 minutes
+                self._last_intent_warn[guild.id] = now
+                try:
+                    await message.channel.send(
+                        "I can’t read message text. Enable the 'Message Content Intent' "
+                        "for this bot in the Discord Developer Portal and in Red."
+                    )
+                except Exception:
+                    pass
 
         # Strip leading bot mention from content for cleaner prompts
         if mentioned and self.bot.user:
