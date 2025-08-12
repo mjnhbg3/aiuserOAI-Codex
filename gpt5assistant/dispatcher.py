@@ -219,15 +219,19 @@ class Dispatcher:
                         stream = self.client.respond_chat(msgs, options)
                         combined = await stream_text_buffered(stream, flush_cb, interval=0.4, max_buffer=1500)
                         if (sent_msg is None) and (not combined.strip()):
-                            # Retry once without tools as fallback
-                            tooly = options.tools
-                            options.tools = {k: False for k in tooly}
-                            stream2 = self.client.respond_chat(msgs, options)
-                            combined2 = await stream_text_buffered(stream2, flush_cb, interval=0.4, max_buffer=1500)
-                            # restore tools
-                            options.tools = tooly
-                            if (sent_msg is None) and (not combined2.strip()):
-                                await message.channel.send("Sorry, I couldn’t produce a reply. Try again or use [p]gpt5 ask …")
+                            # Retry with a simplified prompt (short system, no history) and tools enabled
+                            simple_msgs = build_messages("You are a helpful assistant.", [], content)
+                            stream_simple = self.client.respond_chat(simple_msgs, options)
+                            combined_simple = await stream_text_buffered(stream_simple, flush_cb, interval=0.4, max_buffer=1500)
+                            if (sent_msg is None) and (not combined_simple.strip()):
+                                # Retry once without tools as fallback
+                                tooly = dict(options.tools)
+                                options.tools = {k: False for k in tooly}
+                                stream2 = self.client.respond_chat(simple_msgs, options)
+                                combined2 = await stream_text_buffered(stream2, flush_cb, interval=0.4, max_buffer=1500)
+                                options.tools = tooly
+                                if (sent_msg is None) and (not combined2.strip()):
+                                    await message.channel.send("Sorry, I couldn’t produce a reply. Try again or use [p]gpt5 ask …")
             except Exception as e:
                 await message.channel.send(f"Sorry, I hit an error: {e}")
 
