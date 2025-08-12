@@ -56,6 +56,10 @@ class OpenAIClient:
         formatted: List[Dict[str, Any]] = []
         files_added = False
         for m in messages:
+            role = m.get("role", "user")
+            # Only include system and user messages to avoid constructing output_message structures
+            if role not in ("system", "user"):
+                continue
             content = m.get("content", "")
             parts: List[Dict[str, Any]]
             if isinstance(content, str):
@@ -65,13 +69,13 @@ class OpenAIClient:
             if (
                 enable_file_search
                 and not files_added
-                and m.get("role") == "user"
+                and role == "user"
                 and file_ids
             ):
                 for fid in file_ids:
                     parts.append({"type": "input_file", "file_id": fid})
                 files_added = True
-            formatted.append({"role": m.get("role", "user"), "content": parts})
+            formatted.append({"type": "message", "role": role, "content": parts})
         return formatted
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
