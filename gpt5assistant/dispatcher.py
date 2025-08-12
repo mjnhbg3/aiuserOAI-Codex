@@ -66,8 +66,8 @@ class Dispatcher:
             mentioned = any(m.id == self.bot.user.id for m in message.mentions)
 
         is_reply_to_bot = False
-        if reply_to_mentions_replies and message.reference and self.bot.user:
-            ref = message.reference
+        ref = getattr(message, "reference", None)
+        if reply_to_mentions_replies and ref and self.bot.user:
             try:
                 replied = ref.cached_message or await self.bot.get_channel(ref.channel_id).fetch_message(ref.message_id)
                 is_reply_to_bot = replied.author.id == self.bot.user.id

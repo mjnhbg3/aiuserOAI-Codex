@@ -63,11 +63,16 @@ from gpt5assistant.dispatcher import Dispatcher
 class DummyAuthor:
     def __init__(self):
         self.bot = False
+        self.id = 1
+        self.display_name = "Test"
+        self.mention = "@Test"
+        self.roles = []
 
 
 class DummyChannel:
     def __init__(self):
         self.sent = []
+        self.id = 1
 
     async def send(self, content=None, **kwargs):
         self.sent.append(content)
@@ -101,7 +106,7 @@ class DummyMessage:
 
 
 class FakeClient:
-    async def respond_chat(self, msgs, options):
+    def respond_chat(self, msgs, options):
         async def gen():
             for tok in ["Hello ", "from ", "GPT5!"]:
                 await asyncio.sleep(0)

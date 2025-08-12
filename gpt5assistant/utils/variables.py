@@ -14,20 +14,22 @@ async def format_variables(ctx_message: discord.Message, text: str) -> str:
 
     now = _dt.datetime.now()
     variables: Dict[str, str] = {
-        "{botname}": (bot.nick or bot.display_name) if bot else "Bot",
-        "{botowner}": (getattr(guild.owner, "display_name", "") if guild and getattr(guild, "owner", None) else ""),
-        "{authorname}": author.display_name,
-        "{authormention}": author.mention,
-        "{servername}": guild.name if guild else "",
-        "{channelname}": channel.name if hasattr(channel, "name") else "",
+        "{botname}": (getattr(bot, "nick", None) or getattr(bot, "display_name", "Bot")) if bot else "Bot",
+        "{botowner}": (
+            getattr(getattr(guild, "owner", None), "display_name", "") if guild else ""
+        ),
+        "{authorname}": getattr(author, "display_name", ""),
+        "{authormention}": getattr(author, "mention", ""),
+        "{servername}": getattr(guild, "name", "") if guild else "",
+        "{channelname}": getattr(channel, "name", "") if hasattr(channel, "name") else "",
         "{channeltopic}": getattr(channel, "topic", "") or "",
         "{currentdate}": now.strftime("%Y/%m/%d"),
         "{currentweekday}": now.strftime("%A"),
         "{currenttime}": now.strftime("%H:%M"),
         "{randomnumber}": str(__import__("random").randint(0, 100)),
     }
-    if guild and guild.emojis:
-        variables["{serveremojis}"] = " ".join(str(e) for e in guild.emojis[:50])
+    if guild and getattr(guild, "emojis", None):
+        variables["{serveremojis}"] = " ".join(str(e) for e in getattr(guild, "emojis")[:50])
     else:
         variables["{serveremojis}"] = ""
 
