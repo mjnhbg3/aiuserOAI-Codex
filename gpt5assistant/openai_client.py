@@ -119,8 +119,20 @@ class OpenAIClient:
             # instructions can carry the system prompt context
             instructions=options.system_prompt,
         ) as stream:
+            any_text = False
             async for text in self._iter_text_from_stream(stream):
-                yield text
+                if text:
+                    any_text = True
+                    yield text
+            # If no streamed text was produced (e.g., tool-only path), try final response
+            if not any_text:
+                try:
+                    final = await stream.get_final_response()
+                    final_text = getattr(final, "output_text", None)
+                    if final_text:
+                        yield final_text
+                except Exception:
+                    pass
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
     async def generate_image(
