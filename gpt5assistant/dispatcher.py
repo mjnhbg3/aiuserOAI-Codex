@@ -163,6 +163,7 @@ class Dispatcher:
                 temperature=gconf["temperature"],
                 system_prompt=gconf["system_prompt"],
                 file_ids=gconf.get("file_ids") or None,
+                vector_store_id=gconf.get("file_kb_id") or None,
             )
 
             sent_msg: Optional[discord.Message] = None

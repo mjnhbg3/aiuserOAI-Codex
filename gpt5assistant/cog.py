@@ -375,7 +375,12 @@ class GPT5Assistant(commands.Cog):
         file_ids = g.get("file_ids") or []
         file_ids.extend(ids)
         await self.config.guild(ctx.guild).file_ids.set(file_ids)
-        await ctx.send(f"Uploaded {len(ids)} files and attached to knowledge base.")
+        # Ensure vector store exists and attach files
+        vs_id = g.get("file_kb_id") or None
+        vs_id = await client.ensure_vector_store(name=f"guild-{ctx.guild.id}-kb", current_id=vs_id)
+        await client.add_files_to_vector_store(vs_id, ids)
+        await self.config.guild(ctx.guild).file_kb_id.set(vs_id)
+        await ctx.send(f"Uploaded {len(ids)} files and added to knowledge base.")
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:

@@ -18,6 +18,7 @@ class ChatOptions:
     temperature: float
     system_prompt: str
     file_ids: Optional[List[str]] = None
+    vector_store_id: Optional[str] = None
 
 
 class OpenAIClient:
@@ -42,12 +43,12 @@ class OpenAIClient:
             except Exception:
                 continue
 
-    def _tools_array(self, tools: Dict[str, bool]) -> List[Dict[str, Any]]:
+    def _tools_array(self, tools: Dict[str, bool], *, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
         arr: List[Dict[str, Any]] = []
         if tools.get("web_search"):
             arr.append({"type": "web_search"})
-        if tools.get("file_search"):
-            arr.append({"type": "file_search"})
+        if tools.get("file_search") and vector_store_id:
+            arr.append({"type": "file_search", "vector_store_ids": [vector_store_id]})
         if tools.get("code_interpreter"):
             arr.append({"type": "code_interpreter"})
         return arr
@@ -99,7 +100,7 @@ class OpenAIClient:
         async with self.client.responses.stream(
             model=options.model,
             input=self._to_input(messages, file_ids=options.file_ids, enable_file_search=bool(options.tools.get("file_search"))),
-            tools=self._tools_array(options.tools),
+            tools=self._tools_array(options.tools, vector_store_id=options.vector_store_id),
             reasoning={"effort": options.reasoning},
             max_output_tokens=options.max_tokens,
             temperature=options.temperature,
@@ -160,3 +161,13 @@ class OpenAIClient:
             uploaded = await self.client.files.create(file=(name, fobj), purpose="assistants")
             file_ids.append(uploaded.id)
         return file_ids
+
+    async def ensure_vector_store(self, *, name: str, current_id: Optional[str] = None) -> str:
+        if current_id:
+            return current_id
+        vs = await self.client.vector_stores.create(name=name)
+        return vs.id
+
+    async def add_files_to_vector_store(self, vector_store_id: str, file_ids: List[str]) -> None:
+        for fid in file_ids:
+            await self.client.vector_stores.files.create(vector_store_id=vector_store_id, file_id=fid)
