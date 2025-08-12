@@ -194,10 +194,10 @@ class Dispatcher:
                 if patterns:
                     async with message.channel.typing():
                         stream = self.client.respond_chat(msgs, options)
-                        full_text = []
+                        full_chunks: list[str] = []
                         async for t in stream:
-                            full_text.append(t)
-                        text = "".join(full_text)
+                            full_chunks.append(t)
+                        text = "".join(full_chunks)
                         # recent authors for {authorname}
                         authors = []
                         if hasattr(message.channel, "history"):
@@ -208,13 +208,18 @@ class Dispatcher:
                         cleaned = await apply_removelist(
                             patterns=patterns, text=text, botname=botname, recent_authors=authors
                         )
-                        for ch in chunk_message(cleaned):
-                            await message.channel.send(ch)
+                        if cleaned.strip():
+                            for ch in chunk_message(cleaned):
+                                await message.channel.send(ch)
+                        else:
+                            await message.channel.send("I didn’t generate any text for that. Try rephrasing or mention me directly.")
                 else:
                     # Show typing while we stream
                     async with message.channel.typing():
                         stream = self.client.respond_chat(msgs, options)
-                        await stream_text_buffered(stream, flush_cb, interval=0.4, max_buffer=1500)
+                        combined = await stream_text_buffered(stream, flush_cb, interval=0.4, max_buffer=1500)
+                        if (sent_msg is None) and (not combined.strip()):
+                            await message.channel.send("I didn’t generate any text. If this was a web search, try again or use [p]gpt5 ask …")
             except Exception as e:
                 await message.channel.send(f"Sorry, I hit an error: {e}")
 

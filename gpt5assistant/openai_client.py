@@ -114,6 +114,7 @@ class OpenAIClient:
             tools=self._tools_array(options.tools, vector_store_id=options.vector_store_id),
             reasoning={"effort": options.reasoning},
             max_output_tokens=options.max_tokens,
+            tool_choice="auto",
             # Some models reject temperature; omit for maximum compatibility
             # instructions can carry the system prompt context
             instructions=options.system_prompt,
