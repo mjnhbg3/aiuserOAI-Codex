@@ -33,6 +33,15 @@ class OpenAIClient:
             # When a tool call is happening via native OpenAI tools, server executes it.
             # We simply relay final text output chunks.
 
+    async def _iter_text_from_chat_stream(self, stream) -> AsyncGenerator[str, None]:
+        async for chunk in stream:
+            try:
+                delta = chunk.choices[0].delta
+                if delta and getattr(delta, "content", None):
+                    yield delta.content
+            except Exception:
+                continue
+
     def _tools_array(self, tools: Dict[str, bool]) -> List[Dict[str, Any]]:
         arr: List[Dict[str, Any]] = []
         if tools.get("web_search"):
@@ -49,22 +58,38 @@ class OpenAIClient:
         messages: List[Dict[str, Any]],
         options: ChatOptions,
     ) -> AsyncGenerator[str, None]:
-        attachments = None
-        if options.file_ids:
-            attachments = [{"file_id": fid, "tools": [{"type": "file_search"}]} for fid in options.file_ids]
+        # Prefer Responses API if available; otherwise fall back to Chat Completions streaming
+        if hasattr(self.client, "responses"):
+            attachments = None
+            if options.file_ids:
+                attachments = [
+                    {"file_id": fid, "tools": [{"type": "file_search"}]}
+                    for fid in options.file_ids
+                ]
 
-        stream = await self.client.responses.stream(
-            model=options.model,
-            messages=messages,
-            tools=self._tools_array(options.tools),
-            reasoning={"effort": options.reasoning},
-            text={"verbosity": options.verbosity},
-            max_output_tokens=options.max_tokens,
-            temperature=options.temperature,
-            attachments=attachments,
-        )
-        async with stream as s:
-            async for text in self._iter_text_from_stream(s):
+            stream = await self.client.responses.stream(
+                model=options.model,
+                messages=messages,
+                tools=self._tools_array(options.tools),
+                reasoning={"effort": options.reasoning},
+                text={"verbosity": options.verbosity},
+                max_output_tokens=options.max_tokens,
+                temperature=options.temperature,
+                attachments=attachments,
+            )
+            async with stream as s:
+                async for text in self._iter_text_from_stream(s):
+                    yield text
+        else:
+            # Compatibility path: Chat Completions streaming (no native tools)
+            stream = await self.client.chat.completions.create(
+                model=options.model,
+                messages=messages,
+                temperature=options.temperature,
+                max_tokens=options.max_tokens,
+                stream=True,
+            )
+            async for text in self._iter_text_from_chat_stream(stream):
                 yield text
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
