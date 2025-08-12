@@ -39,7 +39,7 @@ A production-ready Red-DiscordBot cog that replaces aiuser with a new OpenAI Res
 - `[p]gpt5 image <prompt>` — Generate (or edit if an image is attached)
 - `[p]gpt5 upload` — Upload attached files to the guild knowledge base
 - `[p]gpt5 config model <name>`
-- `[p]gpt5 config reasoning <minimal|medium|high>`
+- `[p]gpt5 config reasoning <minimal|low|medium|high>`
   - Maps to Responses API control: `reasoning.effort`.
 - `[p]gpt5 config tools <enable|disable> <web_search|file_search|code_interpreter|image>`
 - `[p]gpt5 config channels <allow|deny> [#channel]`

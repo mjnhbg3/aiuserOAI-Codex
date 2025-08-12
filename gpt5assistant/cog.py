@@ -73,8 +73,8 @@ class GPT5Assistant(commands.Cog):
     @gpt5_config.command(name="reasoning")
     async def gpt5_config_reasoning(self, ctx: commands.Context, effort: str) -> None:
         effort = effort.lower()
-        if effort not in {"minimal", "medium", "high"}:
-            await ctx.send("Reasoning must be minimal|medium|high.")
+        if effort not in {"minimal", "low", "medium", "high"}:
+            await ctx.send("Reasoning must be minimal|low|medium|high.")
             return
         await self.config.guild(ctx.guild).reasoning.set(effort)
         await ctx.send(f"Reasoning effort set to {effort}.")
