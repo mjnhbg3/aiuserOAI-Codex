@@ -58,38 +58,30 @@ class OpenAIClient:
         messages: List[Dict[str, Any]],
         options: ChatOptions,
     ) -> AsyncGenerator[str, None]:
-        # Prefer Responses API if available; otherwise fall back to Chat Completions streaming
-        if hasattr(self.client, "responses"):
-            attachments = None
-            if options.file_ids:
-                attachments = [
-                    {"file_id": fid, "tools": [{"type": "file_search"}]}
-                    for fid in options.file_ids
-                ]
+        if not hasattr(self.client, "responses"):
+            raise RuntimeError(
+                "OpenAI SDK does not support Responses API. Install 'openai>=1.99.0' and restart Red."
+            )
 
-            stream = await self.client.responses.stream(
-                model=options.model,
-                messages=messages,
-                tools=self._tools_array(options.tools),
-                reasoning={"effort": options.reasoning},
-                text={"verbosity": options.verbosity},
-                max_output_tokens=options.max_tokens,
-                temperature=options.temperature,
-                attachments=attachments,
-            )
-            async with stream as s:
-                async for text in self._iter_text_from_stream(s):
-                    yield text
-        else:
-            # Compatibility path: Chat Completions streaming (no native tools)
-            stream = await self.client.chat.completions.create(
-                model=options.model,
-                messages=messages,
-                temperature=options.temperature,
-                max_tokens=options.max_tokens,
-                stream=True,
-            )
-            async for text in self._iter_text_from_chat_stream(stream):
+        attachments = None
+        if options.file_ids:
+            attachments = [
+                {"file_id": fid, "tools": [{"type": "file_search"}]}
+                for fid in options.file_ids
+            ]
+
+        stream = await self.client.responses.stream(
+            model=options.model,
+            messages=messages,
+            tools=self._tools_array(options.tools),
+            reasoning={"effort": options.reasoning},
+            text={"verbosity": options.verbosity},
+            max_output_tokens=options.max_tokens,
+            temperature=options.temperature,
+            attachments=attachments,
+        )
+        async with stream as s:
+            async for text in self._iter_text_from_stream(s):
                 yield text
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))

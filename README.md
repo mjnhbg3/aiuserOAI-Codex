@@ -18,7 +18,7 @@ A production-ready Red-DiscordBot cog that replaces aiuser with a new OpenAI Res
    - `[p]repo add aiuserOAI-Codex https://github.com/mjnhbg3/aiuserOAI-Codex`
    - `[p]cog install aiuserOAI-Codex gpt5assistant`
    - `[p]load gpt5assistant`
-2. Set your OpenAI API key:
+2. Set your OpenAI API key (requires OpenAI SDK >= 1.99.0; this repo specifies it and Red installs it automatically on first install):
    - `[p]set api openai api_key,<YOUR_KEY>`
 3. Configure tools and model (optional):
    - `[p]gpt5 config model gpt-5`
