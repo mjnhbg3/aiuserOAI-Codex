@@ -103,10 +103,37 @@ class GPT5Assistant(commands.Cog):
         await self.config.guild(ctx.guild).allowed_channels.set(allowed)
         await ctx.send(f"Channel {channel.mention} {action}ed.")
 
-    @gpt5_config.command(name="system")
-    async def gpt5_config_system(self, ctx: commands.Context, *, prompt: str) -> None:
+    @gpt5_config.group(name="system", invoke_without_command=True)
+    async def gpt5_config_system(self, ctx: commands.Context, *, prompt: Optional[str] = None) -> None:
+        """Set or show the system prompt.
+
+        Usage:
+          [p]gpt5 config system <prompt>  -> set prompt
+          [p]gpt5 config system show      -> show current prompt
+        """
+        if prompt is None:
+            # default to show if no prompt provided
+            current = await self.config.guild(ctx.guild).system_prompt()
+            shown = current or "(empty)"
+            if len(shown) <= 1900:
+                await ctx.send(f"Current system prompt:\n```\n{shown}\n```")
+            else:
+                await ctx.send("Current system prompt is long; showing first 1900 chars:")
+                await ctx.send(f"```\n{shown[:1900]}\n```")
+            return
         await self.config.guild(ctx.guild).system_prompt.set(prompt)
         await ctx.send("System prompt updated.")
+
+    @gpt5_config_system.command(name="show")
+    async def gpt5_config_system_show(self, ctx: commands.Context) -> None:
+        """Show the current system prompt."""
+        current = await self.config.guild(ctx.guild).system_prompt()
+        shown = current or "(empty)"
+        if len(shown) <= 1900:
+            await ctx.send(f"Current system prompt:\n```\n{shown}\n```")
+        else:
+            await ctx.send("Current system prompt is long; showing first 1900 chars:")
+            await ctx.send(f"```\n{shown[:1900]}\n```")
 
     @gpt5_config.command(name="max_tokens")
     async def gpt5_config_max_tokens(self, ctx: commands.Context, n: int) -> None:
