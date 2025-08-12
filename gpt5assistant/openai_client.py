@@ -52,13 +52,26 @@ class OpenAIClient:
             arr.append({"type": "code_interpreter"})
         return arr
 
-    def _to_input(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _to_input(self, messages: List[Dict[str, Any]], *, file_ids: Optional[List[str]] = None, enable_file_search: bool = False) -> List[Dict[str, Any]]:
         formatted: List[Dict[str, Any]] = []
+        files_added = False
         for m in messages:
             content = m.get("content", "")
+            parts: List[Dict[str, Any]]
             if isinstance(content, str):
-                content = [{"type": "text", "text": content}]
-            formatted.append({"role": m.get("role", "user"), "content": content})
+                parts = [{"type": "text", "text": content}]
+            else:
+                parts = content  # assume already parts
+            if (
+                enable_file_search
+                and not files_added
+                and m.get("role") == "user"
+                and file_ids
+            ):
+                for fid in file_ids:
+                    parts.append({"type": "input_file", "file_id": fid})
+                files_added = True
+            formatted.append({"role": m.get("role", "user"), "content": parts})
         return formatted
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
@@ -81,12 +94,11 @@ class OpenAIClient:
 
         async with self.client.responses.stream(
             model=options.model,
-            input=self._to_input(messages),
+            input=self._to_input(messages, file_ids=options.file_ids, enable_file_search=bool(options.tools.get("file_search"))),
             tools=self._tools_array(options.tools),
             reasoning={"effort": options.reasoning},
             max_output_tokens=options.max_tokens,
             temperature=options.temperature,
-            attachments=attachments,
         ) as stream:
             async for text in self._iter_text_from_stream(stream):
                 yield text
