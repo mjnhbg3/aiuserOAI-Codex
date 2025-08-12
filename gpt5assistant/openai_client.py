@@ -59,7 +59,7 @@ class OpenAIClient:
             content = m.get("content", "")
             parts: List[Dict[str, Any]]
             if isinstance(content, str):
-                parts = [{"type": "text", "text": content}]
+                parts = [{"type": "input_text", "text": content}]
             else:
                 parts = content  # assume already parts
             if (
