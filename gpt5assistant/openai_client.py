@@ -72,6 +72,15 @@ class OpenAIClient:
                 "OpenAI SDK does not support Responses API. Install 'openai>=1.99.0' and restart Red."
             )
 
+        # --- attachments (before kwargs) ---
+        attachments = None
+        if options.file_ids:
+            attachments = [
+                {"file_id": fid, "tools": [{"type": "file_search"}]}
+                for fid in options.file_ids
+            ]
+
+        # --- kwargs (after attachments) ---
         kwargs = dict(
             model=options.model,
             input=self._to_input(messages),
@@ -80,6 +89,10 @@ class OpenAIClient:
             max_output_tokens=options.max_tokens,
             temperature=options.temperature,
         )
+        if attachments:
+            kwargs["attachments"] = attachments
+
+        # --- streaming (final section) ---
         async with self.client.responses.stream(**kwargs) as stream:
             async for text in self._iter_text_from_stream(stream):
                 yield text
