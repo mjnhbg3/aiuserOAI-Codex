@@ -282,16 +282,75 @@ class GPT5Assistant(commands.Cog):
     @gpt5_config.command(name="show")
     async def gpt5_config_show(self, ctx: commands.Context) -> None:
         g = await self.config.guild(ctx.guild).all()
-        embed = discord.Embed(title="GPT-5 Assistant Settings", color=await ctx.embed_color())
-        embed.add_field(name="Model", value=f"`{g['model']}`", inline=True)
-        embed.add_field(name="Reply Percent", value=f"`{g.get('reply_percent', 0.0):.2f}`", inline=True)
-        embed.add_field(name="Opt-in by default", value=f"`{g.get('optin_by_default', True)}`", inline=True)
-        embed.add_field(name="Backread", value=f"`{g.get('messages_backread', 0)} msgs / {g.get('messages_backread_seconds', 0)} sec`", inline=False)
-        tools = ", ".join([k for k, v in g["tools"].items() if v]) or "none"
-        embed.add_field(name="Tools", value=tools, inline=False)
-        wl = g.get('allowed_channels', [])
+        color = await ctx.embed_color()
+        embed = discord.Embed(title="GPT-5 Assistant Settings", color=color)
+
+        # Core
+        embed.add_field(name="Model", value=f"`{g.get('model')}`", inline=True)
+        embed.add_field(name="Reasoning", value=f"`{g.get('reasoning')}`", inline=True)
+        embed.add_field(name="Max Tokens", value=f"`{g.get('max_tokens')}`", inline=True)
+
+        # Reply behavior
+        embed.add_field(
+            name="Replying",
+            value=(
+                f"reply_percent=`{g.get('reply_percent', 0.0):.2f}`\n"
+                f"reply_mentions=`{g.get('reply_to_mentions_replies', True)}`\n"
+                f"respond_on_mention=`{g.get('respond_on_mention', True)}`\n"
+                f"random_autoreply=`{g.get('random_autoreply', False)}` rate=`{g.get('random_rate', 0.0):.2f}`"
+            ),
+            inline=False,
+        )
+
+        # History and backread
+        embed.add_field(
+            name="History Limits",
+            value=(
+                f"backread_msgs=`{g.get('messages_backread', 0)}`\n"
+                f"backread_seconds=`{g.get('messages_backread_seconds', 0)}`\n"
+                f"turns=`{g.get('history_turns', 8)}` chars=`{g.get('history_chars', 6000)}` include_others=`{g.get('include_others', True)}`"
+            ),
+            inline=False,
+        )
+
+        # Tools
+        tools_enabled = ", ".join([k for k, v in g.get("tools", {}).items() if v]) or "none"
+        embed.add_field(name="Tools Enabled", value=tools_enabled, inline=False)
+
+        # File Search / KB summary
+        kb_id = g.get("file_kb_id")
+        file_ids = g.get("file_ids", [])
+        embed.add_field(
+            name="Knowledge Base",
+            value=(
+                f"vector_store_id={`set` if kb_id else '`none`'}\n"
+                f"file_ids_count=`{len(file_ids)}`"
+            ),
+            inline=True,
+        )
+
+        # Privacy / filters
+        patterns = g.get("removelist_regexes", []) or []
+        embed.add_field(
+            name="Privacy/Safety",
+            value=(
+                f"ephemeral=`{g.get('ephemeral', False)}`\n"
+                f"optin_by_default=`{g.get('optin_by_default', True)}`\n"
+                f"remove_regex_count=`{len(patterns)}`"
+            ),
+            inline=True,
+        )
+
+        # Whitelisted channels
+        wl = g.get("allowed_channels", []) or []
         chans = " ".join(f"<#{cid}>" for cid in wl) if wl else "`None`"
         embed.add_field(name="Whitelisted Channels", value=chans, inline=False)
+
+        # System prompt preview
+        sys_prompt = g.get("system_prompt", "") or "(empty)"
+        preview = sys_prompt if len(sys_prompt) <= 200 else sys_prompt[:200] + "…"
+        embed.add_field(name="System Prompt (preview)", value=f"```\n{preview}\n```", inline=False)
+
         await ctx.send(embed=embed)
 
     @gpt5_config.command(name="triggers")
@@ -415,3 +474,93 @@ class GPT5Assistant(commands.Cog):
             return
         dispatcher = await self._ensure_dispatcher()
         await dispatcher.handle_message(message)
+
+    @gpt5.command(name="diag")
+    @checks.admin_or_permissions(manage_guild=True)
+    async def gpt5_diag(self, ctx: commands.Context) -> None:
+        """Run a quick Responses API diagnostic and show tool settings."""
+        client = await self._ensure_client()
+        g = await self.config.guild(ctx.guild).all()
+        tools = g.get("tools", {}) or {}
+        model = g.get("model", "gpt-5")
+        kb = g.get("file_kb_id") or None
+        try:
+            import openai as _oai
+            sdk_ver = getattr(_oai, "__version__", "unknown")
+        except Exception:
+            sdk_ver = "unknown"
+
+        # Prepare a minimal input
+        from .openai_client import ChatOptions
+        messages = [
+            {"role": "system", "content": g.get("system_prompt", "You are a helpful assistant.")},
+            {
+                "role": "user",
+                "content": "Diagnostic ping: reply with the single word PONG.",
+            },
+        ]
+
+        opts = ChatOptions(
+            model=model,
+            tools=tools,
+            reasoning=g.get("reasoning", "medium"),
+            max_tokens=g.get("max_tokens", 500),
+            temperature=g.get("temperature", 0.7),
+            system_prompt=g.get("system_prompt", ""),
+            file_ids=g.get("file_ids") or None,
+            vector_store_id=kb,
+        )
+
+        # Try a quick no-tool ping first
+        opts_no_tools = ChatOptions(
+            model=model,
+            tools={"web_search": False, "file_search": False, "code_interpreter": False, "image": False},
+            reasoning=opts.reasoning,
+            max_tokens=opts.max_tokens,
+            temperature=opts.temperature,
+            system_prompt=opts.system_prompt,
+            file_ids=None,
+            vector_store_id=None,
+        )
+
+        async def _collect(gen):
+            out = []
+            async for ch in gen:
+                out.append(ch)
+            return "".join(out)
+
+        ok_plain = ""
+        ok_tools = ""
+        err_plain = ""
+        err_tools = ""
+        try:
+            ok_plain = await _collect(client.respond_chat(messages, opts_no_tools))
+        except Exception as e:
+            err_plain = f"{type(e).__name__}: {e}"
+        try:
+            # Short tool test prompt
+            messages[-1]["content"] = "What is one major headline today? Provide a short sentence."
+            ok_tools = await _collect(client.respond_chat(messages, opts))
+        except Exception as e:
+            err_tools = f"{type(e).__name__}: {e}"
+
+        embed = discord.Embed(title="gpt5 diag", color=await ctx.embed_color())
+        embed.add_field(name="SDK", value=f"openai {sdk_ver}", inline=True)
+        embed.add_field(name="Model", value=f"`{model}`", inline=True)
+        enabled = ", ".join(k for k, v in tools.items() if v) or "none"
+        embed.add_field(name="Tools Enabled", value=enabled, inline=False)
+        if kb:
+            embed.add_field(name="Vector Store", value=f"set ({kb[:10]}…)", inline=True)
+        else:
+            embed.add_field(name="Vector Store", value="not set", inline=True)
+
+        if ok_plain:
+            embed.add_field(name="Plain Test", value=(ok_plain[:200] + ("…" if len(ok_plain) > 200 else "")), inline=False)
+        if err_plain:
+            embed.add_field(name="Plain Error", value=err_plain[:500], inline=False)
+        if ok_tools:
+            embed.add_field(name="Tools Test", value=(ok_tools[:400] + ("…" if len(ok_tools) > 400 else "")), inline=False)
+        if err_tools:
+            embed.add_field(name="Tools Error", value=err_tools[:500], inline=False)
+
+        await ctx.send(embed=embed)
