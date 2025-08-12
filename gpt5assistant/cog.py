@@ -485,7 +485,7 @@ class GPT5Assistant(commands.Cog):
     @gpt5.command(name="diag")
     @checks.admin_or_permissions(manage_guild=True)
     async def gpt5_diag(self, ctx: commands.Context) -> None:
-        """Run a quick Responses API diagnostic and show tool settings."""
+        """Run a verbose Responses API diagnostic and show tool settings/payloads."""
         client = await self._ensure_client()
         g = await self.config.guild(ctx.guild).all()
         tools = g.get("tools", {}) or {}
@@ -540,16 +540,50 @@ class GPT5Assistant(commands.Cog):
         ok_tools = ""
         err_plain = ""
         err_tools = ""
+        tools_payload_str = ""
         try:
             ok_plain = await _collect(client.respond_chat(messages, opts_no_tools))
         except Exception as e:
-            err_plain = f"{type(e).__name__}: {e}"
+            # Extract HTTP info if present
+            status = getattr(e, "status_code", None) or getattr(e, "status", None)
+            body = None
+            resp = getattr(e, "response", None)
+            try:
+                if resp and hasattr(resp, "json"):
+                    body = resp.json()
+            except Exception:
+                body = None
+            err_plain = f"{type(e).__name__}: {e} (status={status})\n{str(body)[:500] if body else ''}"
         try:
             # Short tool test prompt
             messages[-1]["content"] = "What is one major headline today? Provide a short sentence."
+            # Compose the actual tools payload we will send
+            eff_tools = {}
+            eff_tools.update(tools)
+            if eff_tools.get("file_search") and not kb:
+                eff_tools["file_search"] = False
+            # Recreate the payload array similar to client _tools_array
+            payload = []
+            if eff_tools.get("web_search"):
+                payload.append({"type": "web_search"})
+            if eff_tools.get("file_search") and kb:
+                payload.append({"type": "file_search", "vector_store_ids": [kb]})
+            if eff_tools.get("code_interpreter"):
+                payload.append({"type": "code_interpreter"})
+            tools_payload_str = str(payload)
+
+            # Use the client path (non-stream create under the hood)
             ok_tools = await _collect(client.respond_chat(messages, opts))
         except Exception as e:
-            err_tools = f"{type(e).__name__}: {e}"
+            status = getattr(e, "status_code", None) or getattr(e, "status", None)
+            body = None
+            resp = getattr(e, "response", None)
+            try:
+                if resp and hasattr(resp, "json"):
+                    body = resp.json()
+            except Exception:
+                body = None
+            err_tools = f"{type(e).__name__}: {e} (status={status})\n{str(body)[:700] if body else ''}"
 
         embed = discord.Embed(title="gpt5 diag", color=await ctx.embed_color())
         embed.add_field(name="SDK", value=f"openai {sdk_ver}", inline=True)
@@ -560,6 +594,9 @@ class GPT5Assistant(commands.Cog):
             embed.add_field(name="Vector Store", value=f"set ({kb[:10]}…)", inline=True)
         else:
             embed.add_field(name="Vector Store", value="not set", inline=True)
+        if tools_payload_str:
+            preview = tools_payload_str if len(tools_payload_str) <= 250 else tools_payload_str[:250] + "…"
+            embed.add_field(name="Tools Payload", value=f"```json\n{preview}\n```", inline=False)
 
         if ok_plain:
             embed.add_field(name="Plain Test", value=(ok_plain[:200] + ("…" if len(ok_plain) > 200 else "")), inline=False)

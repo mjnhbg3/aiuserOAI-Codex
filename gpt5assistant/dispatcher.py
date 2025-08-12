@@ -214,12 +214,20 @@ class Dispatcher:
                         else:
                             await message.channel.send("I didn’t generate any text for that. Try rephrasing or mention me directly.")
                 else:
-                    # Show typing while we stream
+                    # Try with tools first
                     async with message.channel.typing():
                         stream = self.client.respond_chat(msgs, options)
                         combined = await stream_text_buffered(stream, flush_cb, interval=0.4, max_buffer=1500)
                         if (sent_msg is None) and (not combined.strip()):
-                            await message.channel.send("I didn’t generate any text. If this was a web search, try again or use [p]gpt5 ask …")
+                            # Retry once without tools as fallback
+                            tooly = options.tools
+                            options.tools = {k: False for k in tooly}
+                            stream2 = self.client.respond_chat(msgs, options)
+                            combined2 = await stream_text_buffered(stream2, flush_cb, interval=0.4, max_buffer=1500)
+                            # restore tools
+                            options.tools = tooly
+                            if (sent_msg is None) and (not combined2.strip()):
+                                await message.channel.send("Sorry, I couldn’t produce a reply. Try again or use [p]gpt5 ask …")
             except Exception as e:
                 await message.channel.send(f"Sorry, I hit an error: {e}")
 

@@ -117,6 +117,7 @@ class OpenAIClient:
             max_output_tokens=options.max_tokens,
             tool_choice="auto",
             instructions=options.system_prompt,
+            include=["output_text"],
         )
         text = getattr(resp, "output_text", None)
         if not text:
