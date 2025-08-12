@@ -17,6 +17,10 @@ class GPT5Assistant(commands.Cog):
         self.bot = bot
         self.config = Config.get_conf(self, identifier=0xA15E1157, force_registration=True)
         self.config.register_guild(**DEFAULT_GUILD_CONFIG)
+        # Global system-wide prompt
+        self.config.register_global(system_prompt="You are GPT-5, a helpful assistant. Keep replies concise.")
+        # Per-channel cutoff for forget
+        self.config.register_channel(forget_after_ts=0)
         self._client: Optional[OpenAIClient] = None
         self._dispatcher: Optional[Dispatcher] = None
 
@@ -118,25 +122,25 @@ class GPT5Assistant(commands.Cog):
           [p]gpt5 config system show      -> show current prompt
         """
         if prompt is None:
-            # default to show if no prompt provided
-            current = await self.config.guild(ctx.guild).system_prompt()
+            # Show global system prompt
+            current = await self.config.system_prompt()
             shown = current or "(empty)"
             if len(shown) <= 1900:
-                await ctx.send(f"Current system prompt:\n```\n{shown}\n```")
+                await ctx.send(f"Current system prompt (global):\n```\n{shown}\n```")
             else:
                 await ctx.send("Current system prompt is long; showing first 1900 chars:")
                 await ctx.send(f"```\n{shown[:1900]}\n```")
             return
-        await self.config.guild(ctx.guild).system_prompt.set(prompt)
-        await ctx.send("System prompt updated.")
+        await self.config.system_prompt.set(prompt)
+        await ctx.send("System prompt (global) updated.")
 
     @gpt5_config_system.command(name="show")
     async def gpt5_config_system_show(self, ctx: commands.Context) -> None:
         """Show the current system prompt."""
-        current = await self.config.guild(ctx.guild).system_prompt()
+        current = await self.config.system_prompt()
         shown = current or "(empty)"
         if len(shown) <= 1900:
-            await ctx.send(f"Current system prompt:\n```\n{shown}\n```")
+            await ctx.send(f"Current system prompt (global):\n```\n{shown}\n```")
         else:
             await ctx.send("Current system prompt is long; showing first 1900 chars:")
             await ctx.send(f"```\n{shown[:1900]}\n```")
@@ -205,11 +209,13 @@ class GPT5Assistant(commands.Cog):
 
     @gpt5_config.command(name="replypercent")
     async def gpt5_config_replypercent(self, ctx: commands.Context, p: float) -> None:
-        if not (0.0 <= p <= 1.0):
-            await ctx.send("Percent must be between 0.0 and 1.0")
+        # Accept 0-100 and store as 0.0-1.0
+        if not (0.0 <= p <= 100.0):
+            await ctx.send("Percent must be between 0 and 100")
             return
-        await self.config.guild(ctx.guild).reply_percent.set(p)
-        await ctx.send(f"Reply percent set to {p}.")
+        frac = p / 100.0
+        await self.config.guild(ctx.guild).reply_percent.set(frac)
+        await ctx.send(f"Reply percent set to {p:.0f}% ({frac:.2f}).")
 
     @gpt5_config.command(name="replymentions")
     async def gpt5_config_replymentions(self, ctx: commands.Context, value: str) -> None:
@@ -253,19 +259,7 @@ class GPT5Assistant(commands.Cog):
         else:
             await ctx.send("Use add <pattern> | remove <pattern> | list")
 
-    @gpt5_config.command(name="roleprompt")
-    async def gpt5_config_roleprompt(self, ctx: commands.Context, role: discord.Role, *, prompt: str) -> None:
-        data = await self.config.guild(ctx.guild).role_prompts()
-        data[str(role.id)] = prompt
-        await self.config.guild(ctx.guild).role_prompts.set(data)
-        await ctx.send(f"Role prompt set for {role.name}.")
-
-    @gpt5_config.command(name="memberprompt")
-    async def gpt5_config_memberprompt(self, ctx: commands.Context, member: discord.Member, *, prompt: str) -> None:
-        data = await self.config.guild(ctx.guild).member_prompts()
-        data[str(member.id)] = prompt
-        await self.config.guild(ctx.guild).member_prompts.set(data)
-        await ctx.send(f"Member prompt set for {member.display_name}.")
+    # Role/member/channel prompts removed in favor of a single global prompt.
 
     @gpt5.command(name="add")
     @checks.admin_or_permissions(manage_guild=True)
@@ -354,11 +348,25 @@ class GPT5Assistant(commands.Cog):
         embed.add_field(name="Whitelisted Channels", value=chans, inline=False)
 
         # System prompt preview
-        sys_prompt = g.get("system_prompt", "") or "(empty)"
+        sys_prompt = (await self.config.system_prompt()) or "(empty)"
         preview = sys_prompt if len(sys_prompt) <= 200 else sys_prompt[:200] + "…"
-        embed.add_field(name="System Prompt (preview)", value=f"```\n{preview}\n```", inline=False)
+        embed.add_field(name="System Prompt (global)", value=f"```\n{preview}\n```", inline=False)
 
         await ctx.send(embed=embed)
+
+    @commands.command(name="forget")
+    async def gpt5_forget(self, ctx: commands.Context) -> None:
+        """Forget all prior context in this channel from now on.
+
+        Sets a cutoff so message history before this point is not read.
+        """
+        try:
+            import time
+            now = int(time.time())
+            await self.config.channel(ctx.channel).forget_after_ts.set(now)
+            await ctx.send("Okay, I’ll forget previous context in this channel starting now.")
+        except Exception as e:
+            await ctx.send(f"Could not set forget point: {e}")
 
     @gpt5_config.command(name="triggers")
     async def gpt5_config_triggers(self, ctx: commands.Context, which: str, value: str) -> None:

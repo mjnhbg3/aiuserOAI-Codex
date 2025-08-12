@@ -117,29 +117,23 @@ class Dispatcher:
         if lock.locked():
             return
         async with lock:
-            # Build system/context prompt including optional channel context
-            channel_contexts = gconf.get("channel_contexts", {}) or {}
-            ch_ctx = channel_contexts.get(message.channel.id, "") or channel_contexts.get(str(message.channel.id), "")
-            # Prompt override resolution: member > role > channel context > guild/system
-            system_prompt = gconf["system_prompt"]
-            role_prompts = gconf.get("role_prompts", {}) or {}
-            member_prompts = gconf.get("member_prompts", {}) or {}
-            # member
-            mp = member_prompts.get(message.author.id) or member_prompts.get(str(message.author.id))
-            if mp:
-                system_prompt = mp
-            else:
-                for r in getattr(message.author, "roles", []) or []:
-                    rp = role_prompts.get(r.id) or role_prompts.get(str(r.id))
-                    if rp:
-                        system_prompt = rp
-                        break
-            if ch_ctx:
-                system_prompt = f"{system_prompt}\n\nChannel context: {ch_ctx}"
-            # Dynamic variables
-            system_prompt = await format_variables(message, system_prompt)
+            # Single global system prompt with dynamic variables
+            try:
+                sys_prompt_global = await self.config.system_prompt()
+            except Exception:
+                sys_prompt_global = gconf.get("system_prompt", "")
+            system_prompt = await format_variables(message, sys_prompt_global or "")
 
             # Gather recent channel history
+            # Apply per-channel forget cutoff if set
+            earliest_ts = None
+            try:
+                earliest_ts = await self.config.channel(message.channel).forget_after_ts()
+                if not earliest_ts:
+                    earliest_ts = None
+            except Exception:
+                earliest_ts = None
+
             history: List[Dict[str, str]] = await gather_history(
                 channel=message.channel,
                 bot_user_id=getattr(self.bot.user, "id", None) if self.bot else None,
@@ -153,6 +147,7 @@ class Dispatcher:
                 optin_set=set(gconf.get("optin", []) or []),
                 optout_set=set(gconf.get("optout", []) or []),
                 optin_by_default=bool(gconf.get("optin_by_default", True)),
+                earliest_timestamp=earliest_ts,
             )
             msgs = build_messages(system_prompt, history, content)
             # Determine vector store availability; disable file_search tool if none
@@ -167,7 +162,7 @@ class Dispatcher:
                 reasoning=gconf["reasoning"],
                 max_tokens=gconf["max_tokens"],
                 temperature=gconf["temperature"],
-                system_prompt=gconf["system_prompt"],
+                system_prompt=system_prompt,
                 file_ids=gconf.get("file_ids") or None,
                 vector_store_id=vector_store_id,
             )

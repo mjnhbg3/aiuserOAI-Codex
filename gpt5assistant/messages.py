@@ -7,9 +7,9 @@ import asyncio
 
 
 def build_messages(system_prompt: str, history: List[Dict[str, str]], new_user: str) -> List[Dict[str, Any]]:
+    # Note: system_prompt is no longer inserted as a system message.
+    # We pass the prompt via Responses API 'instructions' only, to avoid duplication.
     msgs: List[Dict[str, Any]] = []
-    if system_prompt:
-        msgs.append({"role": "system", "content": system_prompt})
     msgs.extend(history)
     msgs.append({"role": "user", "content": new_user})
     return msgs
@@ -45,6 +45,7 @@ async def gather_history(
     optin_set: Iterable[int] = (),
     optout_set: Iterable[int] = (),
     optin_by_default: bool = True,
+    earliest_timestamp=None,
 ) -> List[Dict[str, str]]:
     """Collect recent channel context into chat history list.
 
@@ -60,6 +61,14 @@ async def gather_history(
     tok = _token_counter()
     # Pull a reasonable number to filter down to pairs
     try:
+        # Normalize earliest cutoff if provided (aware datetime)
+        from datetime import datetime, timezone
+        earliest_dt = None
+        if earliest_timestamp is not None:
+            if isinstance(earliest_timestamp, (int, float)):
+                earliest_dt = datetime.fromtimestamp(float(earliest_timestamp), tz=timezone.utc)
+            else:
+                earliest_dt = earliest_timestamp
         last_time = before_message.created_at
         async for msg in channel.history(limit=max(backread_limit, max_turns * 6), before=before_message, oldest_first=False):
             if not msg.content:
@@ -67,6 +76,12 @@ async def gather_history(
             # Respect time gap window
             try:
                 if last_time and abs((last_time - msg.created_at).total_seconds()) > max_seconds_gap:
+                    break
+            except Exception:
+                pass
+            # Enforce forget/cutoff point (do not include messages older than earliest)
+            try:
+                if earliest_dt is not None and msg.created_at < earliest_dt:
                     break
             except Exception:
                 pass
