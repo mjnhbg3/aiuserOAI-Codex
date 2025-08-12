@@ -16,19 +16,8 @@ def build_messages(system_prompt: str, history: List[Dict[str, str]], new_user: 
 
 
 def _token_counter():
-    try:
-        import tiktoken
-
-        def count(model: str, text: str) -> int:
-            try:
-                enc = tiktoken.encoding_for_model(model)
-            except Exception:
-                enc = tiktoken.get_encoding("cl100k_base")
-            return len(enc.encode(text, disallowed_special=()))
-
-        return count
-    except Exception:
-        return lambda _m, s: len(s) // 4
+    # Deprecated: token counting removed; retained for backward import safety
+    return lambda _m, s: len(s) // 4
 
 
 async def gather_history(
@@ -36,10 +25,7 @@ async def gather_history(
     channel,
     bot_user_id: Optional[int],
     before_message,
-    max_turns: int,
-    max_chars: int,
     include_others: bool,
-    model: str = "gpt-5",
     backread_limit: int = 25,
     max_seconds_gap: int = 1800,
     optin_set: Iterable[int] = (),
@@ -56,10 +42,7 @@ async def gather_history(
     history: List[Dict[str, str]] = []
     if not hasattr(channel, "history"):
         return history
-    count_chars = 0
-    count_tokens = 0
-    tok = _token_counter()
-    # Pull a reasonable number to filter down to pairs
+    # Pull up to backread_limit messages and filter
     try:
         # Normalize earliest cutoff if provided (aware datetime)
         from datetime import datetime, timezone
@@ -70,7 +53,7 @@ async def gather_history(
             else:
                 earliest_dt = earliest_timestamp
         last_time = before_message.created_at
-        async for msg in channel.history(limit=max(backread_limit, max_turns * 6), before=before_message, oldest_first=False):
+        async for msg in channel.history(limit=max(1, backread_limit), before=before_message, oldest_first=False):
             if not msg.content:
                 continue
             # Respect time gap window
@@ -100,17 +83,7 @@ async def gather_history(
             text = msg.content.strip()
             if not text:
                 continue
-            # crude char budgeting
-            if count_chars + len(text) > max_chars:
-                break
-            t = tok(model, text)
-            if count_tokens + t > max_chars * 2:
-                break
             history.append({"role": role, "content": text})
-            count_chars += len(text)
-            count_tokens += t
-            if len(history) >= max_turns * 2:
-                break
     except Exception:
         return []
     # reverse to chronological oldest->newest for the model

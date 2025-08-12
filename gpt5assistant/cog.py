@@ -58,7 +58,7 @@ class GPT5Assistant(commands.Cog):
             f"Ephemeral: {g['ephemeral']} Allowed channels: {len(g['allowed_channels'])}\n"
             f"Respond on mention: {g.get('respond_on_mention', True)}\n"
             f"Random autoreply: {g.get('random_autoreply', False)} rate={g.get('random_rate', 0.0)}\n"
-            f"History: turns={g.get('history_turns', 8)} chars={g.get('history_chars', 6000)} include_others={g.get('include_others', True)}"
+            f"History: backread_msgs={g.get('messages_backread', 25)} backread_seconds={g.get('messages_backread_seconds', 1800)} include_others={g.get('include_others', True)}"
         )
 
     @gpt5.group(name="config")
@@ -308,7 +308,7 @@ class GPT5Assistant(commands.Cog):
             value=(
                 f"backread_msgs=`{g.get('messages_backread', 0)}`\n"
                 f"backread_seconds=`{g.get('messages_backread_seconds', 0)}`\n"
-                f"turns=`{g.get('history_turns', 8)}` chars=`{g.get('history_chars', 6000)}` include_others=`{g.get('include_others', True)}`"
+                f"include_others=`{g.get('include_others', True)}`"
             ),
             inline=False,
         )
@@ -398,24 +398,8 @@ class GPT5Assistant(commands.Cog):
 
     @gpt5_config.group(name="history")
     async def gpt5_config_history(self, ctx: commands.Context) -> None:
-        """Configure chat history window."""
+        """Configure chat history window (backread only)."""
         pass
-
-    @gpt5_config_history.command(name="turns")
-    async def gpt5_config_history_turns(self, ctx: commands.Context, n: int) -> None:
-        if n < 0:
-            await ctx.send("Turns must be >= 0")
-            return
-        await self.config.guild(ctx.guild).history_turns.set(n)
-        await ctx.send(f"History turns set to {n}.")
-
-    @gpt5_config_history.command(name="chars")
-    async def gpt5_config_history_chars(self, ctx: commands.Context, n: int) -> None:
-        if n < 0:
-            await ctx.send("Chars must be >= 0")
-            return
-        await self.config.guild(ctx.guild).history_chars.set(n)
-        await ctx.send(f"History char budget set to {n}.")
 
     @gpt5_config_history.command(name="includeothers")
     async def gpt5_config_history_includeothers(self, ctx: commands.Context, value: str) -> None:
