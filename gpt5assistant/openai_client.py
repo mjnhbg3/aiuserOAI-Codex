@@ -108,30 +108,34 @@ class OpenAIClient:
         # Only enable file_search input_file parts when we actually have a vector store
         enable_fs = bool(options.tools.get("file_search") and options.vector_store_id)
 
-        async with self.client.responses.stream(
+        # For reliability with tool calls, use non-streaming create and yield the final text.
+        resp = await self.client.responses.create(
             model=options.model,
             input=self._to_input(messages, file_ids=options.file_ids, enable_file_search=enable_fs),
             tools=self._tools_array(options.tools, vector_store_id=options.vector_store_id),
             reasoning={"effort": options.reasoning},
             max_output_tokens=options.max_tokens,
             tool_choice="auto",
-            # Some models reject temperature; omit for maximum compatibility
-            # instructions can carry the system prompt context
             instructions=options.system_prompt,
-        ) as stream:
-            any_text = False
-            async for text in self._iter_text_from_stream(stream):
-                if text:
-                    any_text = True
-                    yield text
-            # If no streamed text was produced (e.g., tool-only path), try final response
-            if not any_text:
-                try:
-                    final_text = await stream.get_final_text()
-                    if isinstance(final_text, str) and final_text.strip():
-                        yield final_text
-                except Exception:
-                    pass
+        )
+        text = getattr(resp, "output_text", None)
+        if not text:
+            # Fallback: extract from structured output
+            try:
+                parts = []
+                for msg in getattr(resp, "output", []) or []:
+                    role = getattr(msg, "role", None)
+                    if role == "assistant":
+                        for c in getattr(msg, "content", []) or []:
+                            ctype = getattr(c, "type", None)
+                            if ctype == "output_text":
+                                parts.append(getattr(c, "text", ""))
+                text = "".join(parts)
+            except Exception:
+                text = ""
+        if text:
+            # Yield as a single chunk
+            yield text
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
     async def generate_image(
