@@ -50,7 +50,7 @@ class GuildConfig(TypedDict, total=False):
 
 DEFAULT_TOOLS: Dict[str, bool] = {
     "web_search": True,
-    "file_search": True,
+    "file_search": False,
     "code_interpreter": False,
     "image": True,
 }

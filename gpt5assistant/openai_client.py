@@ -58,25 +58,33 @@ class OpenAIClient:
         files_added = False
         for m in messages:
             role = m.get("role", "user")
-            # Only include system and user messages to avoid constructing output_message structures
-            if role not in ("system", "user"):
-                continue
             content = m.get("content", "")
             parts: List[Dict[str, Any]]
-            if isinstance(content, str):
-                parts = [{"type": "input_text", "text": content}]
-            else:
-                parts = content  # assume already parts
-            if (
-                enable_file_search
-                and not files_added
-                and role == "user"
-                and file_ids
-            ):
-                for fid in file_ids:
-                    parts.append({"type": "input_file", "file_id": fid})
-                files_added = True
-            formatted.append({"type": "message", "role": role, "content": parts})
+            if role in ("system", "user"):
+                if isinstance(content, str):
+                    parts = [{"type": "input_text", "text": content}]
+                else:
+                    parts = content  # assume already parts
+                if (
+                    enable_file_search
+                    and not files_added
+                    and role == "user"
+                    and file_ids
+                ):
+                    for fid in file_ids:
+                        parts.append({"type": "input_file", "file_id": fid})
+                    files_added = True
+                formatted.append({"type": "message", "role": role, "content": parts})
+            elif role == "assistant":
+                # Encode prior assistant replies as output messages
+                text = content if isinstance(content, str) else ""
+                out_parts = [{"type": "output_text", "text": text}]
+                formatted.append({
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": out_parts,
+                })
         return formatted
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
@@ -106,7 +114,9 @@ class OpenAIClient:
             tools=self._tools_array(options.tools, vector_store_id=options.vector_store_id),
             reasoning={"effort": options.reasoning},
             max_output_tokens=options.max_tokens,
-            temperature=options.temperature,
+            # Some models reject temperature; omit for maximum compatibility
+            # instructions can carry the system prompt context
+            instructions=options.system_prompt,
         ) as stream:
             async for text in self._iter_text_from_stream(stream):
                 yield text
