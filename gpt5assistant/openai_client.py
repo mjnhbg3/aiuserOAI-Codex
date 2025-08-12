@@ -127,9 +127,8 @@ class OpenAIClient:
             # If no streamed text was produced (e.g., tool-only path), try final response
             if not any_text:
                 try:
-                    final = await stream.get_final_response()
-                    final_text = getattr(final, "output_text", None)
-                    if final_text:
+                    final_text = await stream.get_final_text()
+                    if isinstance(final_text, str) and final_text.strip():
                         yield final_text
                 except Exception:
                     pass
