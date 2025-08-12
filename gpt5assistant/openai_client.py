@@ -27,11 +27,12 @@ class OpenAIClient:
 
     async def _iter_text_from_stream(self, stream) -> AsyncGenerator[str, None]:
         async for event in stream:
-            # Responses API streaming events; we focus on output_text.delta
-            if hasattr(event, "type") and event.type == "response.output_text.delta":
-                yield event.delta
-            # When a tool call is happening via native OpenAI tools, server executes it.
-            # We simply relay final text output chunks.
+            etype = getattr(event, "type", None)
+            if etype == "response.output_text.delta":
+                yield getattr(event, "delta", "")
+            elif etype == "response.output_text.done":
+                # no-op; end of a text block
+                continue
 
     async def _iter_text_from_chat_stream(self, stream) -> AsyncGenerator[str, None]:
         async for chunk in stream:
@@ -51,6 +52,15 @@ class OpenAIClient:
         if tools.get("code_interpreter"):
             arr.append({"type": "code_interpreter"})
         return arr
+
+    def _to_input(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        formatted: List[Dict[str, Any]] = []
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}]
+            formatted.append({"role": m.get("role", "user"), "content": content})
+        return formatted
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
     async def respond_chat(
@@ -72,10 +82,9 @@ class OpenAIClient:
 
         stream = await self.client.responses.stream(
             model=options.model,
-            messages=messages,
+            input=self._to_input(messages),
             tools=self._tools_array(options.tools),
             reasoning={"effort": options.reasoning},
-            text={"verbosity": options.verbosity},
             max_output_tokens=options.max_tokens,
             temperature=options.temperature,
             attachments=attachments,
