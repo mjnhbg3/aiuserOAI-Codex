@@ -1,0 +1,11 @@
+{
+  "author": ["OpenAI Codex"],
+  "install_msg": "Thanks for adding aiuserOAI-Codex. Install cogs like gpt5assistant with [p]cog install aiuserOAI-Codex gpt5assistant, then [p]load gpt5assistant.",
+  "name": "aiuserOAI-Codex",
+  "short": "GPT-5 Assistant Cogs",
+  "description": "Cogs powered by OpenAI Responses API. Includes gpt5assistant with native tools and image support.",
+  "tags": ["ai", "openai", "assistant", "search", "images"],
+  "min_bot_version": "3.5.0",
+  "end_user_data_statement": "This repository contains cogs that may send user content and files to OpenAI for processing. See each cog's info.json for details."
+}
+
