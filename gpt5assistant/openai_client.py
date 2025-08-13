@@ -858,22 +858,12 @@ class OpenAIClient:
                 if needed:
                     headers = {"Authorization": f"Bearer {self._api_key}", "OpenAI-Beta": "assistants=v2"}
                     async with httpx.AsyncClient(timeout=30) as http:
-                        # If we don't have a container id, list recent containers and search within them
-                        search_containers: list[str] = []
-                        if container_ids:
-                            search_containers = list(container_ids)
-                        else:
-                            try:
-                                rc = await http.get(f"{self._base_url}/containers?limit=1", headers=headers)
-                                if rc.status_code == 200:
-                                    lst = rc.json().get("data") or []
-                                    for it in lst[:1]:
-                                        cid = it.get("id")
-                                        if isinstance(cid, str):
-                                            search_containers.append(cid)
-                                _dbg(f"containers list: searched={len(search_containers)}")
-                            except Exception:
-                                pass
+                        # Only search containers referenced by this response to avoid cross-turn bleed
+                        if not container_ids:
+                            _dbg("containers list: no container_ids for this response; skipping scan")
+                            continue
+                        search_containers: list[str] = list(container_ids)
+                        _dbg(f"containers list: searched={len(search_containers)}")
                         for cid in search_containers:
                             try:
                                 r = await http.get(f"{self._base_url}/containers/{cid}/files", headers=headers)
@@ -883,25 +873,19 @@ class OpenAIClient:
                                 data = r.json()
                                 items = data.get("data") or []
                                 _dbg(f"containers/{cid}/files: {len(items)} items")
-                                fetched_here = 0
                                 for it in items:
                                     try:
                                         fid = it.get("id")
                                         path = it.get("path") or ""
                                         base = os.path.basename(path).lower() if path else ""
-                                        # If we see a container file id, try fetching it even if it wasn't cited earlier
-                                        if isinstance(fid, str) and fid.startswith("cfile_") and fid not in fetched_cfiles:
-                                            _dbg(f"container list fetch by id: cid={cid} fid={fid}")
-                                            chunk = await self._fetch_container_file(cid, fid)
-                                            if chunk:
-                                                # Always treat as file to avoid duplicate image stacks
-                                                name = id_to_filename.get(fid) or base or f"{fid}.bin"
-                                                files.append({"name": name, "bytes": chunk})
-                                                fetched_cfiles.add(fid)
-                                                _dbg(f"container list fetch: got bytes={len(chunk)} for {fid}")
-                                                fetched_here += 1
-                                                if fetched_here >= 1:
-                                                    break
+                                        # Enforce recency: only consider files created within the last ~120s
+                                        created_at = it.get("created_at") or 0
+                                        try:
+                                            import time as _t
+                                            if not isinstance(created_at, int) or (_t.time() - created_at) > 120:
+                                                continue
+                                        except Exception:
+                                            pass
                                         for want in list(needed):
                                             # Match by exact basename OR just by extension (paths may be hashed)
                                             try:
@@ -914,10 +898,7 @@ class OpenAIClient:
                                                 _dbg(f"container list fetch by name/ext: want={want} base={base} cid={cid} fid={fid}")
                                                 chunk = await self._fetch_container_file(cid, fid)
                                                 if chunk:
-                                                    if _looks_like_image(chunk):
-                                                        images.append(chunk)
-                                                    else:
-                                                        files.append({"name": want, "bytes": chunk})
+                                                    files.append({"name": want, "bytes": chunk})
                                                     needed.remove(want)
                                                     _dbg(f"container list fetch: satisfied {want} bytes={len(chunk)}")
                                                 break
@@ -951,17 +932,8 @@ class OpenAIClient:
                     # Gather recent containers
                     search_containers: list[str] = []
                     try:
-                        # Prefer containers discovered in this response; else only the newest one
-                        if container_ids:
-                            search_containers = list(container_ids)
-                        else:
-                            rc = await http.get(f"{self._base_url}/containers?limit=1", headers=headers)
-                            if rc.status_code == 200:
-                                items = rc.json().get("data") or []
-                                for it in items[:1]:
-                                    cid = it.get("id")
-                                    if isinstance(cid, str):
-                                        search_containers.append(cid)
+                        # Only the containers from this response
+                        search_containers = list(container_ids)
                         _dbg(f"final fallback: containers searched={len(search_containers)}")
                     except Exception:
                         pass
@@ -980,7 +952,6 @@ class OpenAIClient:
                                 items.sort(key=lambda x: x.get("created_at", 0), reverse=True)
                             except Exception:
                                 pass
-                            fetched_any = 0
                             for entry in items:
                                 fid = entry.get("id") if isinstance(entry, dict) else None
                                 path = entry.get("path") if isinstance(entry, dict) else None
@@ -988,6 +959,12 @@ class OpenAIClient:
                                     continue
                                 base = os.path.basename(path) if isinstance(path, str) else ""
                                 ext = os.path.splitext(base)[1].lower() if base else ""
+                                created_at = entry.get("created_at") or 0
+                                try:
+                                    if not isinstance(created_at, int) or (time.time() - created_at) > 120:
+                                        continue
+                                except Exception:
+                                    pass
                                 if desired_exts and ext not in desired_exts:
                                     continue
                                 chunk = await self._fetch_container_file(cid, fid)
@@ -1008,9 +985,7 @@ class OpenAIClient:
                                 present.add(selected_name)
                                 _dbg(f"final fallback: fetched {selected_name} from {cid}/{fid} bytes={len(chunk)}")
                                 # Stop after attaching one matching file
-                                fetched_any += 1
-                                if desired_exts and fetched_any >= 1:
-                                    break
+                                break
                         except Exception:
                             _dbg("final fallback: containers list exception")
                             continue
