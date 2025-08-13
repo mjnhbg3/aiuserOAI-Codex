@@ -145,6 +145,68 @@ class Dispatcher:
                 earliest_timestamp=earliest_ts,
             )
             msgs = build_messages(system_prompt, history, content)
+            # Collect a limited number of image attachments from recent history
+            history_image_limit = int(gconf.get("images_backread", 0) or 0)
+            history_image_urls: list[str] = []
+            if history_image_limit > 0 and hasattr(message.channel, "history"):
+                try:
+                    from datetime import datetime, timezone
+                    earliest_dt = None
+                    if earliest_ts is not None:
+                        if isinstance(earliest_ts, (int, float)):
+                            earliest_dt = datetime.fromtimestamp(float(earliest_ts), tz=timezone.utc)
+                        else:
+                            earliest_dt = earliest_ts
+                    last_time = message.created_at
+                    # Iterate most recent first, collect image URLs from allowed authors
+                    async for msg in message.channel.history(limit=int(gconf.get("messages_backread", 25)), before=message, oldest_first=False):
+                        # Respect time window
+                        try:
+                            if last_time and abs((last_time - msg.created_at).total_seconds()) > int(gconf.get("messages_backread_seconds", 1800)):
+                                break
+                        except Exception:
+                            pass
+                        # Enforce forget cutoff
+                        try:
+                            if earliest_dt is not None and msg.created_at < earliest_dt:
+                                break
+                        except Exception:
+                            pass
+                        # Author filters similar to text history
+                        role_is_assistant = bool(msg.author.bot and self.bot and getattr(self.bot, "user", None) and msg.author.id == self.bot.user.id)
+                        if not role_is_assistant:
+                            if not bool(gconf.get("include_others", True)):
+                                continue
+                            uid = msg.author.id
+                            if uid in set(gconf.get("optout", []) or []):
+                                continue
+                            if (uid not in set(gconf.get("optin", []) or [])) and not bool(gconf.get("optin_by_default", True)):
+                                continue
+                        # Scan attachments for images
+                        if getattr(msg, "attachments", None):
+                            for a in msg.attachments:
+                                ctype = a.content_type or ""
+                                is_image = False
+                                if isinstance(ctype, str) and ctype.startswith("image/"):
+                                    is_image = True
+                                else:
+                                    # Infer from filename
+                                    fname = a.filename or ""
+                                    if "." in fname:
+                                        ext = fname.lower().rsplit(".", 1)[-1]
+                                        if ext in {"png","jpg","jpeg","gif","webp","bmp","tif","tiff","svg"}:
+                                            is_image = True
+                                if is_image:
+                                    try:
+                                        history_image_urls.append(a.url)  # type: ignore[attr-defined]
+                                    except Exception:
+                                        continue
+                                    if len(history_image_urls) >= history_image_limit:
+                                        break
+                        if len(history_image_urls) >= history_image_limit:
+                            break
+                except Exception:
+                    history_image_urls = []
             # Determine vector store availability; disable file_search tool if none
             vector_store_id = gconf.get("file_kb_id") or None
             effective_tools = dict(gconf["tools"])  # shallow copy
@@ -202,6 +264,10 @@ class Dispatcher:
                     except Exception:
                         inline_file_ids = []
                         inline_image_ids = []
+
+            # Seed inline image URLs with recent historical images (limited)
+            if history_image_urls:
+                inline_image_urls.extend(history_image_urls)
 
             # Include attachments from the replied-to message (one hop) so the model can edit/inspect them
             if getattr(message, "reference", None):

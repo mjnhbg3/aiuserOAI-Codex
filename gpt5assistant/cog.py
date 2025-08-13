@@ -63,7 +63,7 @@ class GPT5Assistant(commands.Cog):
             f"Ephemeral: {g['ephemeral']} Allowed channels: {len(g['allowed_channels'])}\n"
             f"Respond on mention: {g.get('respond_on_mention', True)}\n"
             f"Random autoreply: {g.get('random_autoreply', False)} rate={g.get('random_rate', 0.0)}\n"
-            f"History: backread_msgs={g.get('messages_backread', 25)} backread_seconds={g.get('messages_backread_seconds', 1800)} include_others={g.get('include_others', True)}"
+            f"History: backread_msgs={g.get('messages_backread', 25)} backread_images={g.get('images_backread', 0)} backread_seconds={g.get('messages_backread_seconds', 1800)} include_others={g.get('include_others', True)}"
         )
 
     @gpt5.group(name="config")
@@ -271,6 +271,15 @@ class GPT5Assistant(commands.Cog):
         await self.config.guild(ctx.guild).messages_backread.set(max(0, n))
         await ctx.send(f"Messages backread set to {n}.")
 
+    @gpt5_config_backread.command(name="images")
+    async def gpt5_config_backread_images(self, ctx: commands.Context, n: int) -> None:
+        """Set how many prior images to include from history.
+
+        Example: [p]gpt5 config backread images 3
+        """
+        await self.config.guild(ctx.guild).images_backread.set(max(0, n))
+        await ctx.send(f"Images backread set to {n}.")
+
     @gpt5_config_backread.command(name="seconds")
     async def gpt5_config_backread_seconds(self, ctx: commands.Context, n: int) -> None:
         await self.config.guild(ctx.guild).messages_backread_seconds.set(max(0, n))
@@ -345,6 +354,7 @@ class GPT5Assistant(commands.Cog):
             name="History Limits",
             value=(
                 f"backread_msgs=`{g.get('messages_backread', 0)}`\n"
+                f"backread_images=`{g.get('images_backread', 0)}`\n"
                 f"backread_seconds=`{g.get('messages_backread_seconds', 0)}`\n"
                 f"include_others=`{g.get('include_others', True)}`"
             ),

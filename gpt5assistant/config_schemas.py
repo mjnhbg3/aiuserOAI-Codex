@@ -41,6 +41,7 @@ class GuildConfig(TypedDict, total=False):
     # History backread/age window
     messages_backread: int
     messages_backread_seconds: int
+    images_backread: int
     # Response filters
     removelist_regexes: List[str]
     # Prompt overrides
@@ -84,6 +85,7 @@ DEFAULT_GUILD_CONFIG: GuildConfig = {
     "reply_to_mentions_replies": True,
     "messages_backread": 25,
     "messages_backread_seconds": 1800,
+    "images_backread": 3,
     "removelist_regexes": [],
     "role_prompts": {},
     "member_prompts": {},

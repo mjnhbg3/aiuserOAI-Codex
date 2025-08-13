@@ -320,7 +320,7 @@ class OpenAIClient:
                         fid = m.get("id") or m.get("file_id") or getattr(msg, "id", None)
                         if isinstance(fid, str):
                             file_ids_to_fetch.append(fid)
-                        continue
+                        # Continue on to also scan nested structures on this message, if any
                     # Message content list
                     content = getattr(msg, "content", None)
                     if content is None and isinstance(msg, dict):
@@ -345,6 +345,7 @@ class OpenAIClient:
                                     file_ids_to_fetch.append(fid)
                             elif ctype in ("tool_output", "tool_result"):
                                 data = cdict.get("content") or cdict.get("output")
+                                # Data might be dict, list, or string
                                 if isinstance(data, dict):
                                     b64 = data.get("b64_json")
                                     if b64:
@@ -352,6 +353,65 @@ class OpenAIClient:
                                             images.append(base64.b64decode(b64))
                                         except Exception:
                                             pass
+                                    # Look for nested image/file references
+                                    fid = data.get("file_id") or data.get("id")
+                                    if isinstance(fid, str):
+                                        file_ids_to_fetch.append(fid)
+                                    # Some SDKs place images under 'images'
+                                    imgs = data.get("images")
+                                    if isinstance(imgs, list):
+                                        for it in imgs:
+                                            if isinstance(it, dict):
+                                                if isinstance(it.get("b64_json"), str):
+                                                    try:
+                                                        images.append(base64.b64decode(it["b64_json"]))
+                                                    except Exception:
+                                                        pass
+                                                fid2 = it.get("file_id") or it.get("id")
+                                                if isinstance(fid2, str):
+                                                    file_ids_to_fetch.append(fid2)
+                                elif isinstance(data, list):
+                                    for it in data:
+                                        if isinstance(it, dict):
+                                            b64 = it.get("b64_json")
+                                            if isinstance(b64, str):
+                                                try:
+                                                    images.append(base64.b64decode(b64))
+                                                except Exception:
+                                                    pass
+                                            fid = it.get("file_id") or it.get("id")
+                                            if isinstance(fid, str):
+                                                file_ids_to_fetch.append(fid)
+            # Final safety pass: recursively scan the entire output for any stray image/file refs
+            def _scan(obj: Any) -> None:
+                if isinstance(obj, dict):
+                    # Base64 blobs
+                    b64 = obj.get("b64_json")
+                    if isinstance(b64, str):
+                        try:
+                            images.append(base64.b64decode(b64))
+                        except Exception:
+                            pass
+                    # URLs
+                    u = obj.get("url")
+                    if isinstance(u, str):
+                        image_urls.append(u)
+                    # File IDs (favor likely image mime)
+                    fid = obj.get("file_id") or obj.get("id")
+                    mime = obj.get("mime_type") or obj.get("mime")
+                    if isinstance(fid, str):
+                        if (isinstance(mime, str) and mime.startswith("image/")) or ("image" in str(obj.get("type", "")).lower()):
+                            file_ids_to_fetch.append(fid)
+                    for v in obj.values():
+                        _scan(v)
+                elif isinstance(obj, list):
+                    for v in obj:
+                        _scan(v)
+            try:
+                if out is not None:
+                    _scan(out)
+            except Exception:
+                pass
         except Exception:
             pass
 
