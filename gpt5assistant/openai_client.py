@@ -237,6 +237,8 @@ class OpenAIClient:
         self,
         messages: List[Dict[str, Any]],
         options: ChatOptions,
+        *,
+        debug: bool = False,
     ) -> Dict[str, Any]:
         if not hasattr(self.client, "responses"):
             raise RuntimeError(
@@ -244,6 +246,13 @@ class OpenAIClient:
             )
 
         attachments = None
+        dbg: List[str] = []
+        def _dbg(msg: str) -> None:
+            if debug:
+                try:
+                    dbg.append(msg)
+                except Exception:
+                    pass
         if options.file_ids:
             attachments = [
                 {"file_id": fid, "tools": [{"type": "file_search"}]}
@@ -252,6 +261,7 @@ class OpenAIClient:
 
         enable_fs = bool(options.tools.get("file_search") and options.vector_store_id)
 
+        _dbg("responses.create: sending request")
         resp = await self.client.responses.create(
             model=options.model,
             input=self._to_input(
@@ -275,6 +285,7 @@ class OpenAIClient:
 
         # If the response is still running tools, poll until completed or timeout
         status = getattr(resp, "status", None)
+        _dbg(f"responses.create: status={status}")
         if status not in {"completed", "failed", "cancelled"}:
             deadline = time.monotonic() + 170.0
             while time.monotonic() < deadline:
@@ -282,9 +293,11 @@ class OpenAIClient:
                 try:
                     resp = await self.client.responses.get(resp.id)
                     status = getattr(resp, "status", None)
+                    _dbg(f"responses.get: status={status}")
                     if status in {"completed", "failed", "cancelled"}:
                         break
                 except Exception:
+                    _dbg("responses.get: exception while polling; stopping early")
                     break
 
         # Text
@@ -298,12 +311,12 @@ class OpenAIClient:
         if text is None:
             text = ""
         if not text:
-            try:
-                parts: list[str] = []
-                out = getattr(resp, "output", None)
-                if isinstance(out, list):
-                    for msg in out:
-                        content = getattr(msg, "content", None)
+        try:
+            parts: list[str] = []
+            out = getattr(resp, "output", None)
+            if isinstance(out, list):
+                for msg in out:
+                    content = getattr(msg, "content", None)
                         if content is None and isinstance(msg, dict):
                             content = msg.get("content")
                         if not isinstance(content, list):
@@ -346,6 +359,7 @@ class OpenAIClient:
                     fname = m.strip().lower()
                     if fname not in mentioned_filenames:
                         mentioned_filenames.append(fname)
+            _dbg(f"text filenames: {mentioned_filenames}")
         except Exception:
             pass
         try:
@@ -392,6 +406,7 @@ class OpenAIClient:
                             all_file_ids.add(fid)
                             if fid.startswith("cfile_"):
                                 cfile_ids.add(fid)
+                            _dbg(f"image_generation_call: file_id={fid}")
                         # Continue on to also scan nested structures on this message, if any
                     # Message content list
                     content = getattr(msg, "content", None)
@@ -440,6 +455,7 @@ class OpenAIClient:
                                     all_file_ids.add(fid)
                                     if fid.startswith("cfile_"):
                                         cfile_ids.add(fid)
+                                    _dbg(f"output_image: file_id={fid}")
                                 # Filename mapping if present
                                 fname = (imgobj.get("filename") or cdict.get("filename") or cdict.get("name") or "").strip().lower()
                                 if fname and isinstance(fid, str) and fname not in filename_to_fileid:
@@ -549,6 +565,7 @@ class OpenAIClient:
                                     # If this looks like a container file id, remember it for container fetch fallback
                                     if str(fid).startswith("cfile_"):
                                         cfile_ids.add(fid)
+                                    _dbg(f"output_file: file_id={fid} name={fname_raw} mime={mime}")
             # Final safety pass: recursively scan the entire output for any stray image/file refs
             def _scan(obj: Any) -> None:
                 if isinstance(obj, dict):
@@ -650,7 +667,9 @@ class OpenAIClient:
                                     image_names.append(os.path.basename(path) or None)
                                 except Exception:
                                     image_names.append(None)
+                                _dbg(f"image_url fetched: {u} ({len(r.content)} bytes)")
                         except Exception:
+                            _dbg(f"image_url fetch failed: {u}")
                             continue
             except Exception:
                 pass
@@ -668,6 +687,7 @@ class OpenAIClient:
                         flist = await files_api.files.list(resp.id)
                     items = getattr(flist, "data", None) or getattr(flist, "__dict__", {}).get("data")
                     if isinstance(items, list):
+                        _dbg(f"responses.files.list: {len(items)} items")
                         for it in items:
                             obj = it if isinstance(it, dict) else getattr(it, "__dict__", {})
                             fid = obj.get("id") or obj.get("file_id")
@@ -700,7 +720,10 @@ class OpenAIClient:
         # Fetch any container-cited files first (highest confidence)
         for cit in container_citations:
             try:
-                chunk = await self._fetch_container_file(cit.get("container_id", ""), cit.get("file_id", ""))
+                cid = cit.get("container_id", "")
+                fid = cit.get("file_id", "")
+                _dbg(f"container_citation fetch: cid={cid} fid={fid}")
+                chunk = await self._fetch_container_file(cid, fid)
                 if chunk:
                     # Map filename
                     fname = (cit.get("filename") or "").strip().lower()
@@ -737,7 +760,10 @@ class OpenAIClient:
                     else:
                         name = fname or f"{cit.get('file_id','cfile')}.bin"
                         files.append({"name": name, "bytes": chunk})
+                else:
+                    _dbg("container_citation fetch: no bytes returned")
             except Exception:
+                _dbg("container_citation fetch: exception")
                 continue
 
         # Fetch any file ids via OpenAI files.content
@@ -780,6 +806,7 @@ class OpenAIClient:
                 return False
             return False
 
+        _dbg(f"files.content: prioritized_ids={prioritized_ids}")
         for fid in prioritized_ids:
             try:
                 file_resp = await self.client.files.content(fid)
@@ -793,15 +820,19 @@ class OpenAIClient:
                     else:
                         name = id_to_filename.get(fid) or f"{fid}.bin"
                         files.append({"name": name, "bytes": chunk})
+                    _dbg(f"files.content: fetched fid={fid} bytes={len(chunk)}")
             except Exception:
+                _dbg(f"files.content: failed fid={fid}")
                 continue
 
         # Attempt to fetch any referenced cfile_* ids directly via known containers
         fetched_cfiles: set[str] = set()
+        _dbg(f"container fallback: cfile_ids={list(cfile_ids)}")
         for cf in list(cfile_ids):
             try:
                 cid = cfile_container.get(cf)
                 if cid:
+                    _dbg(f"container fetch: cid={cid} fid={cf}")
                     chunk = await self._fetch_container_file(cid, cf)
                     if chunk:
                         if _looks_like_image(chunk):
@@ -810,7 +841,11 @@ class OpenAIClient:
                             name = id_to_filename.get(cf) or f"{cf}.bin"
                             files.append({"name": name, "bytes": chunk})
                         fetched_cfiles.add(cf)
+                        _dbg(f"container fetch: got bytes={len(chunk)} for {cf}")
+                else:
+                    _dbg(f"container fetch: no cid mapped for {cf}")
             except Exception:
+                _dbg(f"container fetch: exception for {cf}")
                 continue
 
         # Final fallback A: if we have container ids and mentioned filenames not yet attached, list container files and fetch by basename match
@@ -837,15 +872,18 @@ class OpenAIClient:
                                         cid = it.get("id")
                                         if isinstance(cid, str):
                                             search_containers.append(cid)
+                                _dbg(f"containers list: searched={len(search_containers)}")
                             except Exception:
                                 pass
                         for cid in search_containers:
                             try:
                                 r = await http.get(f"{self._base_url}/containers/{cid}/files", headers=headers)
                                 if r.status_code != 200:
+                                    _dbg(f"containers/{cid}/files: status={r.status_code}")
                                     continue
                                 data = r.json()
                                 items = data.get("data") or []
+                                _dbg(f"containers/{cid}/files: {len(items)} items")
                                 for it in items:
                                     try:
                                         fid = it.get("id")
@@ -853,6 +891,7 @@ class OpenAIClient:
                                         base = os.path.basename(path).lower() if path else ""
                                         # If we still have unknown cfile ids without container mapping, try to fetch by id
                                         if isinstance(fid, str) and fid.startswith("cfile_") and fid in cfile_ids and fid not in fetched_cfiles:
+                                            _dbg(f"container list fetch by id: cid={cid} fid={fid}")
                                             chunk = await self._fetch_container_file(cid, fid)
                                             if chunk:
                                                 if _looks_like_image(chunk):
@@ -861,8 +900,10 @@ class OpenAIClient:
                                                     name = id_to_filename.get(fid) or base or f"{fid}.bin"
                                                     files.append({"name": name, "bytes": chunk})
                                                 fetched_cfiles.add(fid)
+                                                _dbg(f"container list fetch: got bytes={len(chunk)} for {fid}")
                                         for want in list(needed):
                                             if base == want:
+                                                _dbg(f"container list fetch by name: want={want} cid={cid} fid={fid}")
                                                 chunk = await self._fetch_container_file(cid, fid)
                                                 if chunk:
                                                     if _looks_like_image(chunk):
@@ -870,13 +911,18 @@ class OpenAIClient:
                                                     else:
                                                         files.append({"name": want, "bytes": chunk})
                                                     needed.remove(want)
+                                                    _dbg(f"container list fetch: satisfied {want} bytes={len(chunk)}")
                                                 break
                                     except Exception:
+                                        _dbg("containers/{cid}/files: item loop exception")
                                         continue
                             except Exception:
+                                _dbg(f"containers/{cid}/files: exception")
                                 continue
         except Exception:
-                pass
+            pass
+
+        _dbg(f"final counts: images={len(images)} files={len(files)}")
 
         # De-duplicate images by content (hash) and keep aligned names
         try:
@@ -900,6 +946,7 @@ class OpenAIClient:
                     dedup_names.append(name)
                 images = dedup_images
                 image_names = dedup_names
+                _dbg(f"dedup images: kept={len(images)}")
         except Exception:
             # On any error, keep originals
             pass
@@ -922,10 +969,14 @@ class OpenAIClient:
                     seen_hashes.add(h)
                     dedup_files.append(f)
                 files = dedup_files
+                _dbg(f"dedup files: kept={len(files)}")
         except Exception:
             pass
 
-        return {"text": text or "", "images": images, "image_names": image_names, "files": files}
+        result: Dict[str, Any] = {"text": text or "", "images": images, "image_names": image_names, "files": files}
+        if debug:
+            result["debug"] = dbg
+        return result
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
     async def generate_image(

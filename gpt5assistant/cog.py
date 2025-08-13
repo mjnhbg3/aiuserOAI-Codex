@@ -671,7 +671,7 @@ class GPT5Assistant(commands.Cog):
             opts.inline_file_ids = inline_file_ids or None
             opts.inline_image_ids = inline_image_ids or None
             opts.inline_image_urls = inline_image_urls or None
-            result = await client.respond_collect(messages, opts)
+            result = await client.respond_collect(messages, opts, debug=True)
             ok_tools = result.get("text", "") or (f"[images: {len(result.get('images') or [])}]" if result.get("images") else "")
         except Exception as e:
             # Unwrap RetryError to original HTTP error where possible
@@ -747,5 +747,16 @@ class GPT5Assistant(commands.Cog):
                         await ctx.send(file=file)
                     except Exception:
                         continue
+                # Attach debug trace as a text file if present
+                dbg = result.get('debug')
+                if isinstance(dbg, list) and dbg:
+                    try:
+                        from io import BytesIO
+                        text = "\n".join(str(x) for x in dbg)
+                        buf = BytesIO(text.encode('utf-8', errors='replace'))
+                        file = discord.File(buf, filename='gpt5_diag_debug.txt')
+                        await ctx.send(file=file)
+                    except Exception:
+                        pass
         except Exception:
             pass
