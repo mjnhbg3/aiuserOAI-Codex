@@ -929,6 +929,92 @@ class OpenAIClient:
         except Exception:
             pass
 
+        # Final fallback B: if no files were found but a filename was mentioned,
+        # wait briefly and re-list recent containers to fetch by extension.
+        try:
+            if self._api_key and (not files) and mentioned_filenames:
+                await asyncio.sleep(0.6)
+                import httpx, os
+                headers = {"Authorization": f"Bearer {self._api_key}", "OpenAI-Beta": "assistants=v2"}
+                # Derive desired extensions from mentioned filenames
+                desired_exts: set[str] = set()
+                for n in mentioned_filenames:
+                    try:
+                        ext = os.path.splitext(n)[1].lower()
+                        if ext:
+                            desired_exts.add(ext)
+                    except Exception:
+                        pass
+                async with httpx.AsyncClient(timeout=30) as http:
+                    search_containers: list[str] = []
+                    try:
+                        rc = await http.get(f"{self._base_url}/containers?limit=6", headers=headers)
+                        if rc.status_code == 200:
+                            lst = rc.json().get("data") or []
+                            for it in lst[:6]:
+                                cid = it.get("id")
+                                if isinstance(cid, str):
+                                    search_containers.append(cid)
+                        _dbg(f"final fallback: containers searched={len(search_containers)}")
+                    except Exception:
+                        pass
+                    present = set()
+                    for f in files:
+                        nm = f.get("name")
+                        if isinstance(nm, str):
+                            present.add(nm)
+                    for cid in search_containers:
+                        try:
+                            r = await http.get(f"{self._base_url}/containers/{cid}/files?limit=10", headers=headers)
+                            if r.status_code != 200:
+                                _dbg(f"final fallback: containers/{cid}/files status={r.status_code}")
+                                continue
+                            data = r.json()
+                            items = data.get("data") or []
+                            # newest first
+                            try:
+                                items.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+                            except Exception:
+                                pass
+                            for it in items:
+                                try:
+                                    fid = it.get("id")
+                                    path = it.get("path") or ""
+                                    base = os.path.basename(path) if isinstance(path, str) else ""
+                                    ext = os.path.splitext(base)[1].lower() if base else ""
+                                    if desired_exts and ext not in desired_exts:
+                                        continue
+                                    if not isinstance(fid, str) or not fid.startswith("cfile_"):
+                                        continue
+                                    chunk = await self._fetch_container_file(cid, fid)
+                                    if not chunk:
+                                        continue
+                                    # Pick name from mentioned list that shares this extension, or use base
+                                    name: Optional[str] = None
+                                    for m in mentioned_filenames:
+                                        try:
+                                            if os.path.splitext(m)[1].lower() == ext and m not in present:
+                                                name = m
+                                                break
+                                        except Exception:
+                                            pass
+                                    if not name:
+                                        name = base or f"{fid}.bin"
+                                    files.append({"name": name, "bytes": chunk})
+                                    present.add(name)
+                                    _dbg(f"final fallback: fetched {name} from {cid}/{fid} bytes={len(chunk)}")
+                                    # If we've satisfied at least one requested extension, we can stop
+                                    if desired_exts and len(present) >= 1:
+                                        break
+                            except Exception:
+                                _dbg("final fallback: item loop exception")
+                                continue
+                        except Exception:
+                            _dbg("final fallback: containers list exception")
+                            continue
+        except Exception:
+            pass
+
         _dbg(f"final counts: images={len(images)} files={len(files)}")
 
         # De-duplicate images by content (hash) and keep aligned names
