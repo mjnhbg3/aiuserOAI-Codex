@@ -588,6 +588,38 @@ class GPT5Assistant(commands.Cog):
             except Exception:
                 body = None
             err_plain = f"{type(e).__name__}: {e} (status={status})\n{str(body)[:500] if body else ''}"
+        # If the diag command message has attachments, include them inline for the tools test
+        inline_file_ids: list[str] = []
+        inline_image_ids: list[str] = []
+        if getattr(ctx.message, "attachments", None):
+            contents: list[bytes] = []
+            names: list[str] = []
+            kinds: list[str] = []
+            for a in ctx.message.attachments:
+                ctype = a.content_type or ""
+                try:
+                    data = await a.read()
+                except Exception:
+                    continue
+                contents.append(data)
+                fname = a.filename or "attachment"
+                names.append(fname)
+                if not ctype and "." in fname:
+                    ext = fname.lower().rsplit(".", 1)[-1]
+                    if ext in {"png","jpg","jpeg","gif","webp","bmp","tif","tiff","svg"}:
+                        ctype = f"image/{'jpeg' if ext=='jpg' else ext}"
+                kinds.append(ctype)
+            if contents:
+                try:
+                    ids = await client.index_files(contents, names)
+                    for fid, ctype in zip(ids, kinds):
+                        if isinstance(ctype, str) and ctype.startswith("image/"):
+                            inline_image_ids.append(fid)
+                        else:
+                            inline_file_ids.append(fid)
+                except Exception:
+                    pass
+
         try:
             # Short tool test prompt
             messages[-1]["content"] = d_tools or "What is one major headline today? Provide a short sentence."
@@ -611,6 +643,9 @@ class GPT5Assistant(commands.Cog):
             tools_payload_str = str(payload)
 
             # Use the client path and collect final output including images
+            # Include inline attachments for this diag run
+            opts.inline_file_ids = inline_file_ids or None
+            opts.inline_image_ids = inline_image_ids or None
             result = await client.respond_collect(messages, opts)
             ok_tools = result.get("text", "") or (f"[images: {len(result.get('images') or [])}]" if result.get("images") else "")
         except Exception as e:
