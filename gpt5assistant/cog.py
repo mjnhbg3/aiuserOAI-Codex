@@ -716,4 +716,18 @@ class GPT5Assistant(commands.Cog):
         if err_tools:
             embed.add_field(name="Tools Error", value=err_tools[:500], inline=False)
 
+        # Send embed first
         await ctx.send(embed=embed)
+
+        # If tools run produced images, attach them so users can see them inline
+        try:
+            if 'result' in locals():
+                imgs = result.get('images') or []
+                for idx, img in enumerate(imgs):
+                    try:
+                        file = discord.File(BytesIO(img), filename=f"diag_image_{idx+1}.png")
+                        await ctx.send(file=file)
+                    except Exception:
+                        continue
+        except Exception:
+            pass

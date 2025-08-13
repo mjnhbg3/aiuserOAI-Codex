@@ -408,6 +408,21 @@ class OpenAIClient:
                                             fname = (it.get("filename") or it.get("name") or "").strip().lower()
                                             if fname and isinstance(fid, str) and fname not in filename_to_fileid:
                                                 filename_to_fileid[fname] = fid
+                            elif ctype in ("output_file", "file"):
+                                fid = cdict.get("file_id") or cdict.get("id")
+                                fname = (cdict.get("filename") or cdict.get("name") or "").strip().lower()
+                                mime = cdict.get("mime_type") or cdict.get("mime")
+                                is_img = False
+                                if isinstance(mime, str) and mime.startswith("image/"):
+                                    is_img = True
+                                if not is_img and isinstance(fname, str):
+                                    low = fname.lower()
+                                    if any(low.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff")):
+                                        is_img = True
+                                if is_img and isinstance(fid, str):
+                                    file_ids_to_fetch.append(fid)
+                                    if fname and fname not in filename_to_fileid:
+                                        filename_to_fileid[fname] = fid
             # Final safety pass: recursively scan the entire output for any stray image/file refs
             def _scan(obj: Any) -> None:
                 if isinstance(obj, dict):
