@@ -56,6 +56,10 @@ class OpenAIClient:
                     if r.status_code == 200:
                         return r.content
                 
+            # Skip container endpoint if no container_id provided (for direct resp_ fetch)
+            if not container_id:
+                return None
+                
             # Standard container file endpoint
             url = f"{self._base_url}/containers/{container_id}/files/{file_id}/content"
             headers = {
@@ -746,6 +750,48 @@ class OpenAIClient:
                         cfile_ids.add(fid)
             else:
                 _dbg("no container_id found in response")
+                # Fallback: if we have resp_ files but no container, try to find recent containers
+                resp_files = [fid for fid in all_file_ids if fid.startswith("resp_")]
+                if resp_files and mentioned_filenames:
+                    _dbg(f"fallback: searching for containers to match resp_ files: {resp_files}")
+                    try:
+                        import httpx
+                        if self._api_key:
+                            headers = {"Authorization": f"Bearer {self._api_key}", "OpenAI-Beta": "assistants=v2"}
+                            async with httpx.AsyncClient(timeout=30) as http:
+                                # List recent containers
+                                r = await http.get(f"{self._base_url}/containers?limit=10", headers=headers)
+                                if r.status_code == 200:
+                                    data = r.json()
+                                    containers = data.get("data") or []
+                                    _dbg(f"fallback: found {len(containers)} recent containers")
+                                    # Try each container to find files matching our mentioned filenames
+                                    for container in containers:
+                                        container_id = container.get("id")
+                                        if not container_id:
+                                            continue
+                                        try:
+                                            r2 = await http.get(f"{self._base_url}/containers/{container_id}/files", headers=headers)
+                                            if r2.status_code == 200:
+                                                files_data = r2.json()
+                                                files_list = files_data.get("data") or []
+                                                for file_entry in files_list:
+                                                    file_path = file_entry.get("path", "")
+                                                    file_name = file_path.split("/")[-1] if "/" in file_path else file_path
+                                                    if file_name.lower() in [mf.lower() for mf in mentioned_filenames]:
+                                                        _dbg(f"fallback: found matching file {file_name} in container {container_id}")
+                                                        container_ids.add(container_id)
+                                                        # Map all resp_ files to this container
+                                                        for resp_fid in resp_files:
+                                                            cfile_container[resp_fid] = container_id
+                                                            cfile_ids.add(resp_fid)
+                                                        break
+                                        except Exception:
+                                            continue
+                                        if resp_files and all(rf in cfile_container for rf in resp_files):
+                                            break
+                    except Exception as e:
+                        _dbg(f"fallback container search failed: {e}")
         except Exception as e:
             _dbg(f"container detection exception: {e}")
             pass
@@ -893,6 +939,33 @@ class OpenAIClient:
             except Exception:
                 _dbg(f"container fetch: exception for {cf}")
                 continue
+
+        # Direct resp_ file fetch attempt for unmapped files
+        for fid in all_file_ids:
+            if fid.startswith("resp_") and fid not in fetched_cfiles:
+                _dbg(f"direct resp_ fetch: attempting {fid}")
+                try:
+                    chunk = await self._fetch_container_file("", fid)  # Empty container ID triggers resp_ endpoint
+                    if chunk:
+                        if _looks_like_image(chunk):
+                            images.append(chunk)
+                            fname = id_to_filename.get(fid)
+                            image_names.append(fname)
+                        else:
+                            # Try to use mentioned filename if available
+                            name = None
+                            for mentioned in mentioned_filenames:
+                                if mentioned not in [f.get("name") for f in files]:
+                                    name = mentioned
+                                    break
+                            if not name:
+                                name = id_to_filename.get(fid) or f"{fid}.bin"
+                            files.append({"name": name, "bytes": chunk})
+                        fetched_cfiles.add(fid)
+                        _dbg(f"direct resp_ fetch: got bytes={len(chunk)} for {fid}")
+                except Exception as e:
+                    _dbg(f"direct resp_ fetch: failed for {fid}: {e}")
+                    continue
 
         # Final fallback A: if we have container ids and mentioned filenames not yet attached, list container files and fetch by basename match
         try:
