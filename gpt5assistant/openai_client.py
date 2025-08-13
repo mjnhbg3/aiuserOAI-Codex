@@ -469,6 +469,29 @@ class OpenAIClient:
                                             if fname and isinstance(fid, str) and fname not in filename_to_fileid:
                                                 filename_to_fileid[fname] = fid
                                                 id_to_filename[fid] = fname
+                                        elif isinstance(it, str):
+                                            try:
+                                                s = it.strip()
+                                                # If the tool returned a filename as a plain string (common), capture it
+                                                import re
+                                                m = re.match(r"^[A-Za-z0-9_\- .]+\.(png|jpg|jpeg|gif|bmp|webp|tif|tiff|csv|pdf|zip|xlsx|xls|json|txt|md|html|docx|pptx|xml|tar)$", s, flags=re.IGNORECASE)
+                                                if m:
+                                                    low = s.lower()
+                                                    if low not in mentioned_filenames:
+                                                        mentioned_filenames.append(low)
+                                            except Exception:
+                                                pass
+                                elif isinstance(data, str):
+                                    try:
+                                        s = data.strip()
+                                        import re
+                                        m = re.match(r"^[A-Za-z0-9_\- .]+\.(png|jpg|jpeg|gif|bmp|webp|tif|tiff|csv|pdf|zip|xlsx|xls|json|txt|md|html|docx|pptx|xml|tar)$", s, flags=re.IGNORECASE)
+                                        if m:
+                                            low = s.lower()
+                                            if low not in mentioned_filenames:
+                                                mentioned_filenames.append(low)
+                                    except Exception:
+                                        pass
                             elif ctype in ("output_file", "file"):
                                 fid = cdict.get("file_id") or cdict.get("id")
                                 fname = (cdict.get("filename") or cdict.get("name") or "").strip().lower()
@@ -709,14 +732,30 @@ class OpenAIClient:
         # Final fallback: if we have container ids and mentioned filenames not yet attached, list container files and fetch by basename match
         try:
             import httpx, os
-            if container_ids and mentioned_filenames and self._api_key:
+            if mentioned_filenames and self._api_key:
                 # Calculate names already present
                 present = set(f.get("name") for f in files if isinstance(f.get("name"), str))
                 needed = [n for n in mentioned_filenames if n not in present]
                 if needed:
                     headers = {"Authorization": f"Bearer {self._api_key}", "OpenAI-Beta": "assistants=v2"}
                     async with httpx.AsyncClient(timeout=30) as http:
-                        for cid in container_ids:
+                        # If we don't have a container id, list recent containers and search within them
+                        search_containers: list[str] = []
+                        if container_ids:
+                            search_containers = list(container_ids)
+                        else:
+                            try:
+                                rc = await http.get(f"{self._base_url}/containers", headers=headers)
+                                if rc.status_code == 200:
+                                    lst = rc.json().get("data") or []
+                                    # take up to the 3 most recent
+                                    for it in lst[:3]:
+                                        cid = it.get("id")
+                                        if isinstance(cid, str):
+                                            search_containers.append(cid)
+                            except Exception:
+                                pass
+                        for cid in search_containers:
                             try:
                                 r = await http.get(f"{self._base_url}/containers/{cid}/files", headers=headers)
                                 if r.status_code != 200:
@@ -732,7 +771,6 @@ class OpenAIClient:
                                             if base == want:
                                                 chunk = await self._fetch_container_file(cid, fid)
                                                 if chunk:
-                                                    # Route by type
                                                     if _looks_like_image(chunk):
                                                         images.append(chunk)
                                                     else:
