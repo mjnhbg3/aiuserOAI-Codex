@@ -27,7 +27,7 @@ class ChatOptions:
 
 
 class OpenAIClient:
-    def __init__(self, api_key: Optional[str] = None, *, timeout: float = 60.0) -> None:
+    def __init__(self, api_key: Optional[str] = None, *, timeout: float = 180.0) -> None:
         self.client = AsyncOpenAI(api_key=api_key, timeout=timeout)
 
     async def _iter_text_from_stream(self, stream) -> AsyncGenerator[str, None]:
@@ -274,6 +274,8 @@ class OpenAIClient:
 
         # Images
         images: list[bytes] = []
+        image_urls: list[str] = []
+        file_ids_to_fetch: list[str] = []
         try:
             out = getattr(resp, "output", None)
             if isinstance(out, list):
@@ -295,6 +297,12 @@ class OpenAIClient:
                                     images.append(base64.b64decode(b64))
                                 except Exception:
                                     pass
+                            url = imgobj.get("url") or cdict.get("url")
+                            if isinstance(url, str):
+                                image_urls.append(url)
+                            fid = imgobj.get("id") or imgobj.get("file_id") or cdict.get("id")
+                            if isinstance(fid, str):
+                                file_ids_to_fetch.append(fid)
                         elif ctype in ("tool_output", "tool_result"):
                             # Some SDKs wrap tool outputs
                             data = cdict.get("content") or cdict.get("output")
@@ -307,6 +315,32 @@ class OpenAIClient:
                                         pass
         except Exception:
             pass
+
+        # Fetch any image URLs
+        if image_urls:
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=30) as http:
+                    for u in image_urls:
+                        try:
+                            r = await http.get(u)
+                            if r.status_code == 200:
+                                images.append(r.content)
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+
+        # Fetch any file ids via OpenAI files.content
+        for fid in file_ids_to_fetch:
+            try:
+                file_resp = await self.client.files.content(fid)
+                # file_resp is an httpx.Response-like object with bytes in .read()
+                chunk = await file_resp.aread() if hasattr(file_resp, "aread") else file_resp.read()
+                if chunk:
+                    images.append(chunk)
+            except Exception:
+                continue
 
         return {"text": text or "", "images": images}
 
