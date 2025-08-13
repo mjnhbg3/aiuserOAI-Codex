@@ -22,6 +22,7 @@ class GPT5Assistant(commands.Cog):
             system_prompt="You are GPT-5, a helpful assistant. Keep replies concise.",
             diag_plain="Diagnostic ping: reply with the single word PONG.",
             diag_tools="What is one major headline today? Provide a short sentence.",
+            code_container_type="",
         )
         # Per-channel cutoff for forget
         self.config.register_channel(forget_after_ts=0)
@@ -85,6 +86,24 @@ class GPT5Assistant(commands.Cog):
     async def gpt5_config_diag_tools(self, ctx: commands.Context, *, text: str) -> None:
         await self.config.diag_tools.set(text)
         await ctx.send("Set diag tools prompt.")
+
+    @gpt5_config.group(name="code")
+    async def gpt5_config_code(self, ctx: commands.Context) -> None:
+        """Configure code interpreter tool settings."""
+        pass
+
+    @gpt5_config_code.command(name="container")
+    async def gpt5_config_code_container(self, ctx: commands.Context, container_type: str) -> None:
+        """Set code interpreter container type (provider-specific). Use 'off' to disable.
+
+        Example: [p]gpt5 config code container default
+        """
+        if container_type.lower() in {"off", "none", ""}:
+            await self.config.code_container_type.set("")
+            await ctx.send("Code interpreter container cleared; tool will be omitted.")
+        else:
+            await self.config.code_container_type.set(container_type)
+            await ctx.send(f"Code interpreter container type set to '{container_type}'.")
 
     @gpt5_config.command(name="model")
     async def gpt5_config_model(self, ctx: commands.Context, *, name: str) -> None:
@@ -520,6 +539,7 @@ class GPT5Assistant(commands.Cog):
             {"role": "user", "content": d_plain or "Diagnostic ping: reply with the single word PONG."},
         ]
 
+        code_container_type = await self.config.code_container_type()
         opts = ChatOptions(
             model=model,
             tools=tools,
@@ -529,6 +549,7 @@ class GPT5Assistant(commands.Cog):
             system_prompt=g.get("system_prompt", ""),
             file_ids=g.get("file_ids") or None,
             vector_store_id=kb,
+            code_container_type=code_container_type or None,
         )
 
         # Try a quick no-tool ping first
@@ -612,6 +633,12 @@ class GPT5Assistant(commands.Cog):
         if tools_payload_str:
             preview = tools_payload_str if len(tools_payload_str) <= 250 else tools_payload_str[:250] + "…"
             embed.add_field(name="Tools Payload", value=f"```json\n{preview}\n```", inline=False)
+        # Show code container type if set
+        ctype = await self.config.code_container_type()
+        if ctype:
+            embed.add_field(name="Code Container", value=f"`{ctype}`", inline=True)
+        else:
+            embed.add_field(name="Code Container", value="(not set)", inline=True)
 
         if ok_plain:
             embed.add_field(name="Plain Test", value=(ok_plain[:200] + ("…" if len(ok_plain) > 200 else "")), inline=False)

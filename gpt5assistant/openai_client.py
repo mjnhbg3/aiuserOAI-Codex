@@ -22,6 +22,8 @@ class ChatOptions:
     # Attachments from the current message
     inline_file_ids: Optional[List[str]] = None
     inline_image_ids: Optional[List[str]] = None
+    # Code interpreter container type (model/environment specific)
+    code_container_type: Optional[str] = None
 
 
 class OpenAIClient:
@@ -46,14 +48,22 @@ class OpenAIClient:
             except Exception:
                 continue
 
-    def _tools_array(self, tools: Dict[str, bool], *, vector_store_id: Optional[str]) -> List[Dict[str, Any]]:
+    def _tools_array(
+        self,
+        tools: Dict[str, bool],
+        *,
+        vector_store_id: Optional[str],
+        code_container_type: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         arr: List[Dict[str, Any]] = []
         if tools.get("web_search"):
             arr.append({"type": "web_search"})
         if tools.get("file_search") and vector_store_id:
             arr.append({"type": "file_search", "vector_store_ids": [vector_store_id]})
         if tools.get("code_interpreter"):
-            arr.append({"type": "code_interpreter", "container": {}})
+            if code_container_type:
+                arr.append({"type": "code_interpreter", "container": {"type": code_container_type}})
+            # If no container type configured, skip adding code_interpreter to avoid 400s
         if tools.get("image"):
             # Allow the model to call image generation natively via Responses tools
             arr.append({"type": "image_generation"})
@@ -142,7 +152,11 @@ class OpenAIClient:
                 inline_file_ids=options.inline_file_ids,
                 inline_image_ids=options.inline_image_ids,
             ),
-            tools=self._tools_array(options.tools, vector_store_id=options.vector_store_id),
+            tools=self._tools_array(
+                options.tools,
+                vector_store_id=options.vector_store_id,
+                code_container_type=options.code_container_type,
+            ),
             reasoning={"effort": options.reasoning},
             max_output_tokens=options.max_tokens,
             tool_choice="auto",
@@ -213,7 +227,11 @@ class OpenAIClient:
                 inline_file_ids=options.inline_file_ids,
                 inline_image_ids=options.inline_image_ids,
             ),
-            tools=self._tools_array(options.tools, vector_store_id=options.vector_store_id),
+            tools=self._tools_array(
+                options.tools,
+                vector_store_id=options.vector_store_id,
+                code_container_type=options.code_container_type,
+            ),
             reasoning={"effort": options.reasoning},
             max_output_tokens=options.max_tokens,
             tool_choice="auto",

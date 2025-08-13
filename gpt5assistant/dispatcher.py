@@ -223,6 +223,12 @@ class Dispatcher:
                         except Exception:
                             pass
 
+            # Code interpreter container type (optional, global)
+            try:
+                code_container_type = await self.config.code_container_type()
+            except Exception:
+                code_container_type = None
+
             options = ChatOptions(
                 model=gconf["model"],
                 tools=effective_tools,
@@ -234,6 +240,7 @@ class Dispatcher:
                 vector_store_id=None,
                 inline_file_ids=inline_file_ids or None,
                 inline_image_ids=inline_image_ids or None,
+                code_container_type=code_container_type or None,
             )
 
             sent_msg: Optional[discord.Message] = None
