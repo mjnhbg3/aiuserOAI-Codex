@@ -115,6 +115,16 @@ class Dispatcher:
         if lock.locked():
             return
         async with lock:
+            # Determine guild prefixes to filter command messages from context
+            prefixes: list[str] = []
+            try:
+                res = self.bot.get_valid_prefixes(message.guild)
+                if inspect.isawaitable(res):
+                    res = await res
+                if isinstance(res, (list, tuple)):
+                    prefixes = [p for p in res if isinstance(p, str)]
+            except Exception:
+                prefixes = []
             # Single global system prompt with dynamic variables
             try:
                 sys_prompt_global = await self.config.system_prompt()
@@ -143,6 +153,7 @@ class Dispatcher:
                 optout_set=set(gconf.get("optout", []) or []),
                 optin_by_default=bool(gconf.get("optin_by_default", True)),
                 earliest_timestamp=earliest_ts,
+                skip_prefixes=prefixes,
             )
             msgs = build_messages(system_prompt, history, content)
             # Collect a limited number of image attachments from recent history
@@ -166,6 +177,10 @@ class Dispatcher:
                                 break
                         except Exception:
                             pass
+                        # Skip command messages
+                        rawc = (msg.content or "")
+                        if any(isinstance(p, str) and p and rawc.lstrip().startswith(p) for p in prefixes):
+                            continue
                         # Enforce forget cutoff
                         try:
                             if earliest_dt is not None and msg.created_at < earliest_dt:

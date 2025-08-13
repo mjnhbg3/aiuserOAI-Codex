@@ -32,6 +32,7 @@ async def gather_history(
     optout_set: Iterable[int] = (),
     optin_by_default: bool = True,
     earliest_timestamp=None,
+    skip_prefixes: Iterable[str] = (),
 ) -> List[Dict[str, str]]:
     """Collect recent channel context into chat history list.
 
@@ -80,7 +81,15 @@ async def gather_history(
                     continue
                 if (uid not in optin_set) and not optin_by_default:
                     continue
-            text = msg.content.strip()
+            # Skip command messages by prefix
+            raw = (msg.content or "")
+            leading = raw.lstrip()
+            try:
+                if any(isinstance(p, str) and p and leading.startswith(p) for p in skip_prefixes):
+                    continue
+            except Exception:
+                pass
+            text = raw.strip()
             if not text:
                 continue
             history.append({"role": role, "content": text})
