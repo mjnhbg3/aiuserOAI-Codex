@@ -1202,11 +1202,6 @@ class OpenAIClient:
         except Exception:
             pass
 
-        # Debug: log final file details before returning
-        if debug:
-            for i, f in enumerate(files):
-                _dbg(f"final file {i}: name='{f.get('name')}' bytes={len(f.get('bytes', b''))}")
-
         result: Dict[str, Any] = {"text": text or "", "images": images, "image_names": image_names, "files": files}
         if debug:
             result["debug"] = dbg

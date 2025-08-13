@@ -750,24 +750,19 @@ class GPT5Assistant(commands.Cog):
                     except Exception:
                         continue
                 fitems = result.get('files') or []
-                await ctx.send(f"[DEBUG] About to process {len(fitems)} files")
                 for item in fitems:
                     try:
                         name = item.get('name') or 'attachment.bin'
                         data = item.get('bytes')
-                        await ctx.send(f"[DEBUG] Processing file: name='{name}' data_type={type(data)} data_len={len(data) if data else 0}")
                         if not isinstance(name, str) or not isinstance(data, (bytes, bytearray)):
-                            await ctx.send(f"[DEBUG] Skipping file due to type check: name_type={type(name)} data_type={type(data)}")
                             continue
                         if len(data) > 7_900_000:
                             await ctx.send(f"Generated a file '{name}' (~{len(data)//1024} KB), but it's too large to attach here.")
                             continue
+                        from io import BytesIO
                         file = discord.File(BytesIO(data), filename=name)
-                        await ctx.send(f"[DEBUG] Attempting to send file: {name}")
                         await ctx.send(file=file)
-                        await ctx.send(f"[DEBUG] Successfully sent file: {name}")
-                    except Exception as e:
-                        await ctx.send(f"[DEBUG] Exception sending file: {e}")
+                    except Exception:
                         continue
                 # Attach debug trace as a text file if present
                 dbg = result.get('debug')
