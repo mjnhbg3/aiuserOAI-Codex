@@ -106,7 +106,8 @@ class OpenAIClient:
                             parts.append({"type": "input_file", "file_id": fid})
                     if inline_image_ids:
                         for fid in inline_image_ids:
-                            parts.append({"type": "input_image", "image": {"file_id": fid}})
+                            # Per API Reference, provide file IDs under 'image_file'
+                            parts.append({"type": "input_image", "image_file": {"file_id": fid}})
                     inline_files_added = True
                 formatted.append({"type": "message", "role": role, "content": parts})
             elif role == "assistant":
