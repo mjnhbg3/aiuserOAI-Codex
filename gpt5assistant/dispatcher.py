@@ -612,12 +612,9 @@ class Dispatcher:
                             except Exception:
                                 pass
                             continue
-                # Minimal fallback
+                # Minimal fallback: if absolutely nothing, inform user
                 if not text.strip() and not images and not files:
-                    await message.channel.send("I couldn’t produce a result for that. If you asked for an image, ensure the image tool is enabled: $gpt5 config tools enable image.")
-                # Minimal fallback: if absolutely nothing, inform user without extra requests
-                if not text.strip() and not images:
-                    await message.channel.send("I couldn’t produce a result for that. If you asked for an image, ensure the image tool is enabled: [p]gpt5 config tools enable image.")
+                    await message.channel.send("I couldn't produce a result for that. If you asked for an image, ensure the image tool is enabled: [p]gpt5 config tools enable image.")
             except Exception as e:
                 # Try to extract body/status for clearer diagnostics
                 orig = e
