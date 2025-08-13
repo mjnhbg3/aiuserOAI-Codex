@@ -790,7 +790,8 @@ class OpenAIClient:
             except Exception:
                 continue
 
-        # Attempt to fetch any referenced cfile_* ids directly via containers
+        # Attempt to fetch any referenced cfile_* ids directly via known containers
+        fetched_cfiles: set[str] = set()
         for cf in list(cfile_ids):
             try:
                 cid = cfile_container.get(cf)
@@ -802,10 +803,11 @@ class OpenAIClient:
                         else:
                             name = id_to_filename.get(cf) or f"{cf}.bin"
                             files.append({"name": name, "bytes": chunk})
+                        fetched_cfiles.add(cf)
             except Exception:
                 continue
 
-        # Final fallback: if we have container ids and mentioned filenames not yet attached, list container files and fetch by basename match
+        # Final fallback A: if we have container ids and mentioned filenames not yet attached, list container files and fetch by basename match
         try:
             import httpx, os
             if mentioned_filenames and self._api_key:
@@ -843,6 +845,16 @@ class OpenAIClient:
                                         fid = it.get("id")
                                         path = it.get("path") or ""
                                         base = os.path.basename(path).lower() if path else ""
+                                        # If we still have unknown cfile ids without container mapping, try to fetch by id
+                                        if isinstance(fid, str) and fid.startswith("cfile_") and fid in cfile_ids and fid not in fetched_cfiles:
+                                            chunk = await self._fetch_container_file(cid, fid)
+                                            if chunk:
+                                                if _looks_like_image(chunk):
+                                                    images.append(chunk)
+                                                else:
+                                                    name = id_to_filename.get(fid) or base or f"{fid}.bin"
+                                                    files.append({"name": name, "bytes": chunk})
+                                                fetched_cfiles.add(fid)
                                         for want in list(needed):
                                             if base == want:
                                                 chunk = await self._fetch_container_file(cid, fid)
