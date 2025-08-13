@@ -332,11 +332,13 @@ class OpenAIClient:
         mentioned_filenames: list[str] = []
         container_citations: list[Dict[str, str]] = []  # {container_id, file_id, filename}
         files: list[Dict[str, Any]] = []  # {name, bytes}
-        # Extract any image-like filenames from the visible text for correlation (e.g., parabola.png)
+        container_ids: set[str] = set()
+        # Extract any filenames from the visible text for correlation (e.g., parabola.png, random_numbers.csv)
         try:
             import re
             if text:
-                for m in re.findall(r"([A-Za-z0-9_\- .]+\.(?:png|jpg|jpeg|gif|bmp|webp|tif|tiff))", text, flags=re.IGNORECASE):
+                pattern = r"([A-Za-z0-9_\- .]+\.(?:png|jpg|jpeg|gif|bmp|webp|tif|tiff|csv|pdf|zip|xlsx|xls|json|txt|md|html|docx|pptx|xml|tar))"
+                for m in re.findall(pattern, text, flags=re.IGNORECASE):
                     # Normalize spacing and case
                     fname = m.strip().lower()
                     if fname not in mentioned_filenames:
@@ -391,6 +393,7 @@ class OpenAIClient:
                                                 "file_id": fid,
                                                 "filename": fname,
                                             })
+                                            container_ids.add(cid)
                             if ctype in ("output_image", "image"):
                                 imgobj = cdict.get("image") or {}
                                 b64 = imgobj.get("b64_json") or cdict.get("b64_json")
@@ -498,6 +501,10 @@ class OpenAIClient:
                     u = obj.get("url")
                     if isinstance(u, str):
                         image_urls.append(u)
+                    # Container id anywhere present
+                    cid = obj.get("container_id")
+                    if isinstance(cid, str) and cid:
+                        container_ids.add(cid)
                     # File IDs (favor likely image mime)
                     fid = obj.get("file_id") or obj.get("id")
                     mime = obj.get("mime_type") or obj.get("mime")
@@ -698,6 +705,46 @@ class OpenAIClient:
                         files.append({"name": name, "bytes": chunk})
             except Exception:
                 continue
+
+        # Final fallback: if we have container ids and mentioned filenames not yet attached, list container files and fetch by basename match
+        try:
+            import httpx, os
+            if container_ids and mentioned_filenames and self._api_key:
+                # Calculate names already present
+                present = set(f.get("name") for f in files if isinstance(f.get("name"), str))
+                needed = [n for n in mentioned_filenames if n not in present]
+                if needed:
+                    headers = {"Authorization": f"Bearer {self._api_key}", "OpenAI-Beta": "assistants=v2"}
+                    async with httpx.AsyncClient(timeout=30) as http:
+                        for cid in container_ids:
+                            try:
+                                r = await http.get(f"{self._base_url}/containers/{cid}/files", headers=headers)
+                                if r.status_code != 200:
+                                    continue
+                                data = r.json()
+                                items = data.get("data") or []
+                                for it in items:
+                                    try:
+                                        fid = it.get("id")
+                                        path = it.get("path") or ""
+                                        base = os.path.basename(path).lower() if path else ""
+                                        for want in list(needed):
+                                            if base == want:
+                                                chunk = await self._fetch_container_file(cid, fid)
+                                                if chunk:
+                                                    # Route by type
+                                                    if _looks_like_image(chunk):
+                                                        images.append(chunk)
+                                                    else:
+                                                        files.append({"name": want, "bytes": chunk})
+                                                    needed.remove(want)
+                                                break
+                                    except Exception:
+                                        continue
+                            except Exception:
+                                continue
+        except Exception:
+            pass
 
         return {"text": text or "", "images": images, "image_names": image_names, "files": files}
 
