@@ -351,14 +351,14 @@ class OpenAIClient:
         cfile_container: dict[str, str] = {}
         # Extract any filenames from the visible text for correlation (e.g., parabola.png, random_numbers.csv)
         try:
-            import re
+            import re, os
             if text:
-                pattern = r"([A-Za-z0-9_\- .]+\.(?:png|jpg|jpeg|gif|bmp|webp|tif|tiff|csv|pdf|zip|xlsx|xls|json|txt|md|html|docx|pptx|xml|tar))"
+                # Only capture clean basenames (no spaces) like foo.png, data.csv, etc.
+                pattern = r"\b([A-Za-z0-9_\-.]+\.(?:png|jpg|jpeg|gif|bmp|webp|tif|tiff|csv|pdf|zip|xlsx|xls|json|txt|md|html|docx|pptx|xml|tar))\b"
                 for m in re.findall(pattern, text, flags=re.IGNORECASE):
-                    # Normalize spacing and case
-                    fname = m.strip().lower()
-                    if fname not in mentioned_filenames:
-                        mentioned_filenames.append(fname)
+                    base = os.path.basename(m).strip().lower()
+                    if base and base not in mentioned_filenames:
+                        mentioned_filenames.append(base)
             _dbg(f"text filenames: {mentioned_filenames}")
         except Exception:
             pass
@@ -523,10 +523,10 @@ class OpenAIClient:
                                             try:
                                                 s = it.strip()
                                                 # If the tool returned a filename as a plain string (common), capture it
-                                                import re
-                                                m = re.match(r"^[A-Za-z0-9_\- .]+\.(png|jpg|jpeg|gif|bmp|webp|tif|tiff|csv|pdf|zip|xlsx|xls|json|txt|md|html|docx|pptx|xml|tar)$", s, flags=re.IGNORECASE)
+                                                import re, os
+                                                m = re.search(r"\b([A-Za-z0-9_\-.]+\.(png|jpg|jpeg|gif|bmp|webp|tif|tiff|csv|pdf|zip|xlsx|xls|json|txt|md|html|docx|pptx|xml|tar))\b", s, flags=re.IGNORECASE)
                                                 if m:
-                                                    low = s.lower()
+                                                    low = os.path.basename(m.group(1)).lower()
                                                     if low not in mentioned_filenames:
                                                         mentioned_filenames.append(low)
                                             except Exception:
@@ -534,10 +534,10 @@ class OpenAIClient:
                                 elif isinstance(data, str):
                                     try:
                                         s = data.strip()
-                                        import re
-                                        m = re.match(r"^[A-Za-z0-9_\- .]+\.(png|jpg|jpeg|gif|bmp|webp|tif|tiff|csv|pdf|zip|xlsx|xls|json|txt|md|html|docx|pptx|xml|tar)$", s, flags=re.IGNORECASE)
+                                        import re, os
+                                        m = re.search(r"\b([A-Za-z0-9_\-.]+\.(png|jpg|jpeg|gif|bmp|webp|tif|tiff|csv|pdf|zip|xlsx|xls|json|txt|md|html|docx|pptx|xml|tar))\b", s, flags=re.IGNORECASE)
                                         if m:
-                                            low = s.lower()
+                                            low = os.path.basename(m.group(1)).lower()
                                             if low not in mentioned_filenames:
                                                 mentioned_filenames.append(low)
                                     except Exception:
@@ -864,11 +864,10 @@ class OpenAIClient:
                             search_containers = list(container_ids)
                         else:
                             try:
-                                rc = await http.get(f"{self._base_url}/containers", headers=headers)
+                                rc = await http.get(f"{self._base_url}/containers?limit=1", headers=headers)
                                 if rc.status_code == 200:
                                     lst = rc.json().get("data") or []
-                                    # take up to the 3 most recent
-                                    for it in lst[:3]:
+                                    for it in lst[:1]:
                                         cid = it.get("id")
                                         if isinstance(cid, str):
                                             search_containers.append(cid)
@@ -884,6 +883,7 @@ class OpenAIClient:
                                 data = r.json()
                                 items = data.get("data") or []
                                 _dbg(f"containers/{cid}/files: {len(items)} items")
+                                fetched_here = 0
                                 for it in items:
                                     try:
                                         fid = it.get("id")
@@ -894,13 +894,14 @@ class OpenAIClient:
                                             _dbg(f"container list fetch by id: cid={cid} fid={fid}")
                                             chunk = await self._fetch_container_file(cid, fid)
                                             if chunk:
-                                                if _looks_like_image(chunk):
-                                                    images.append(chunk)
-                                                else:
-                                                    name = id_to_filename.get(fid) or base or f"{fid}.bin"
-                                                    files.append({"name": name, "bytes": chunk})
+                                                # Always treat as file to avoid duplicate image stacks
+                                                name = id_to_filename.get(fid) or base or f"{fid}.bin"
+                                                files.append({"name": name, "bytes": chunk})
                                                 fetched_cfiles.add(fid)
                                                 _dbg(f"container list fetch: got bytes={len(chunk)} for {fid}")
+                                                fetched_here += 1
+                                                if fetched_here >= 1:
+                                                    break
                                         for want in list(needed):
                                             # Match by exact basename OR just by extension (paths may be hashed)
                                             try:
@@ -950,13 +951,17 @@ class OpenAIClient:
                     # Gather recent containers
                     search_containers: list[str] = []
                     try:
-                        rc = await http.get(f"{self._base_url}/containers?limit=6", headers=headers)
-                        if rc.status_code == 200:
-                            items = rc.json().get("data") or []
-                            for it in items[:6]:
-                                cid = it.get("id")
-                                if isinstance(cid, str):
-                                    search_containers.append(cid)
+                        # Prefer containers discovered in this response; else only the newest one
+                        if container_ids:
+                            search_containers = list(container_ids)
+                        else:
+                            rc = await http.get(f"{self._base_url}/containers?limit=1", headers=headers)
+                            if rc.status_code == 200:
+                                items = rc.json().get("data") or []
+                                for it in items[:1]:
+                                    cid = it.get("id")
+                                    if isinstance(cid, str):
+                                        search_containers.append(cid)
                         _dbg(f"final fallback: containers searched={len(search_containers)}")
                     except Exception:
                         pass
@@ -975,6 +980,7 @@ class OpenAIClient:
                                 items.sort(key=lambda x: x.get("created_at", 0), reverse=True)
                             except Exception:
                                 pass
+                            fetched_any = 0
                             for entry in items:
                                 fid = entry.get("id") if isinstance(entry, dict) else None
                                 path = entry.get("path") if isinstance(entry, dict) else None
@@ -1002,7 +1008,8 @@ class OpenAIClient:
                                 present.add(selected_name)
                                 _dbg(f"final fallback: fetched {selected_name} from {cid}/{fid} bytes={len(chunk)}")
                                 # Stop after attaching one matching file
-                                if desired_exts and len(present) >= 1:
+                                fetched_any += 1
+                                if desired_exts and fetched_any >= 1:
                                     break
                         except Exception:
                             _dbg("final fallback: containers list exception")
