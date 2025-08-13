@@ -54,6 +54,9 @@ class OpenAIClient:
             arr.append({"type": "file_search", "vector_store_ids": [vector_store_id]})
         if tools.get("code_interpreter"):
             arr.append({"type": "code_interpreter"})
+        if tools.get("image"):
+            # Allow the model to call image generation natively via Responses tools
+            arr.append({"type": "image_generation"})
         return arr
 
     def _to_input(
@@ -180,6 +183,104 @@ class OpenAIClient:
         if text:
             # Yield as a single chunk
             yield text
+
+    @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
+    async def respond_collect(
+        self,
+        messages: List[Dict[str, Any]],
+        options: ChatOptions,
+    ) -> Dict[str, Any]:
+        if not hasattr(self.client, "responses"):
+            raise RuntimeError(
+                "OpenAI SDK does not support Responses API. Install 'openai>=1.99.0' and restart Red."
+            )
+
+        attachments = None
+        if options.file_ids:
+            attachments = [
+                {"file_id": fid, "tools": [{"type": "file_search"}]}
+                for fid in options.file_ids
+            ]
+
+        enable_fs = bool(options.tools.get("file_search") and options.vector_store_id)
+
+        resp = await self.client.responses.create(
+            model=options.model,
+            input=self._to_input(
+                messages,
+                file_ids=options.file_ids,
+                enable_file_search=enable_fs,
+                inline_file_ids=options.inline_file_ids,
+                inline_image_ids=options.inline_image_ids,
+            ),
+            tools=self._tools_array(options.tools, vector_store_id=options.vector_store_id),
+            reasoning={"effort": options.reasoning},
+            max_output_tokens=options.max_tokens,
+            tool_choice="auto",
+            instructions=options.system_prompt,
+        )
+
+        # Text
+        text = None
+        try:
+            ot = getattr(resp, "output_text", None)
+            if isinstance(ot, str) and ot.strip():
+                text = ot
+        except Exception:
+            text = None
+        if text is None:
+            text = ""
+        if not text:
+            try:
+                parts: list[str] = []
+                out = getattr(resp, "output", None)
+                if isinstance(out, list):
+                    for msg in out:
+                        content = getattr(msg, "content", None)
+                        if content is None and isinstance(msg, dict):
+                            content = msg.get("content")
+                        if not isinstance(content, list):
+                            continue
+                        for c in content:
+                            ctype = getattr(c, "type", None)
+                            if ctype is None and isinstance(c, dict):
+                                ctype = c.get("type")
+                            if ctype == "output_text":
+                                txt = getattr(c, "text", None)
+                                if txt is None and isinstance(c, dict):
+                                    txt = c.get("text")
+                                if txt:
+                                    parts.append(txt)
+                text = "".join(parts)
+            except Exception:
+                text = ""
+
+        # Images
+        images: list[bytes] = []
+        try:
+            out = getattr(resp, "output", None)
+            if isinstance(out, list):
+                for msg in out:
+                    content = getattr(msg, "content", None)
+                    if content is None and isinstance(msg, dict):
+                        content = msg.get("content")
+                    if not isinstance(content, list):
+                        continue
+                    for c in content:
+                        cdict = c if isinstance(c, dict) else getattr(c, "__dict__", {})
+                        ctype = cdict.get("type")
+                        if ctype in ("output_image", "image"):
+                            imgobj = cdict.get("image") or {}
+                            b64 = imgobj.get("b64_json") or cdict.get("b64_json")
+                            if b64:
+                                try:
+                                    images.append(base64.b64decode(b64))
+                                except Exception:
+                                    pass
+        except Exception:
+            pass
+
+        return {"text": text or "", "images": images}
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
     async def generate_image(

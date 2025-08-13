@@ -254,48 +254,56 @@ class Dispatcher:
 
             try:
                 patterns = gconf.get("removelist_regexes", []) or []
-                # If filters present, disable streaming and send once after cleanup
+                async with message.channel.typing():
+                    result = await self.client.respond_collect(msgs, options)
+                text = result.get("text", "")
+                images = result.get("images") or []
                 if patterns:
+                    # recent authors for {authorname}
+                    authors = []
+                    if hasattr(message.channel, "history"):
+                        async for m in message.channel.history(limit=10):
+                            if m.author != message.guild.me:
+                                authors.append(m.author.display_name)
+                    botname = (message.guild.me.nick or message.guild.me.display_name) if message.guild else ""
+                    text = await apply_removelist(
+                        patterns=patterns, text=text, botname=botname, recent_authors=authors
+                    )
+                # Send text
+                if text and text.strip():
+                    for ch in chunk_message(text):
+                        await message.channel.send(ch)
+                # Send images
+                for idx, img in enumerate(images):
+                    file = discord.File(BytesIO(img), filename=f"image_{idx+1}.png")
+                    await message.channel.send(file=file)
+                # Fallbacks
+                if not text.strip() and not images:
+                    # Retry simplified, with tools
+                    simple_msgs = build_messages("You are a helpful assistant.", [], content)
                     async with message.channel.typing():
-                        stream = self.client.respond_chat(msgs, options)
-                        full_chunks: list[str] = []
-                        async for t in stream:
-                            full_chunks.append(t)
-                        text = "".join(full_chunks)
-                        # recent authors for {authorname}
-                        authors = []
-                        if hasattr(message.channel, "history"):
-                            async for m in message.channel.history(limit=10):
-                                if m.author != message.guild.me:
-                                    authors.append(m.author.display_name)
-                        botname = (message.guild.me.nick or message.guild.me.display_name) if message.guild else ""
-                        cleaned = await apply_removelist(
-                            patterns=patterns, text=text, botname=botname, recent_authors=authors
-                        )
-                        if cleaned.strip():
-                            for ch in chunk_message(cleaned):
+                        result2 = await self.client.respond_collect(simple_msgs, options)
+                    text2 = (result2.get("text") or "").strip()
+                    images2 = result2.get("images") or []
+                    if text2:
+                        for ch in chunk_message(text2):
+                            await message.channel.send(ch)
+                    for idx, img in enumerate(images2):
+                        file = discord.File(BytesIO(img), filename=f"image_{idx+1}.png")
+                        await message.channel.send(file=file)
+                    if not text2 and not images2:
+                        # Disable tools and try once
+                        tooly = dict(options.tools)
+                        options.tools = {k: False for k in tooly}
+                        async with message.channel.typing():
+                            result3 = await self.client.respond_collect(simple_msgs, options)
+                        options.tools = tooly
+                        text3 = (result3.get("text") or "").strip()
+                        if text3:
+                            for ch in chunk_message(text3):
                                 await message.channel.send(ch)
                         else:
-                            await message.channel.send("I didn’t generate any text for that. Try rephrasing or mention me directly.")
-                else:
-                    # Try with tools first
-                    async with message.channel.typing():
-                        stream = self.client.respond_chat(msgs, options)
-                        combined = await stream_text_buffered(stream, flush_cb, interval=0.4, max_buffer=1500)
-                        if (sent_msg is None) and (not combined.strip()):
-                            # Retry with a simplified prompt (short system, no history) and tools enabled
-                            simple_msgs = build_messages("You are a helpful assistant.", [], content)
-                            stream_simple = self.client.respond_chat(simple_msgs, options)
-                            combined_simple = await stream_text_buffered(stream_simple, flush_cb, interval=0.4, max_buffer=1500)
-                            if (sent_msg is None) and (not combined_simple.strip()):
-                                # Retry once without tools as fallback
-                                tooly = dict(options.tools)
-                                options.tools = {k: False for k in tooly}
-                                stream2 = self.client.respond_chat(simple_msgs, options)
-                                combined2 = await stream_text_buffered(stream2, flush_cb, interval=0.4, max_buffer=1500)
-                                options.tools = tooly
-                                if (sent_msg is None) and (not combined2.strip()):
-                                    await message.channel.send("Sorry, I couldn’t produce a reply. Try again or use [p]gpt5 ask …")
+                            await message.channel.send("Sorry, I couldn’t produce a reply. Try again or use [p]gpt5 ask …")
             except Exception as e:
                 await message.channel.send(f"Sorry, I hit an error: {e}")
 

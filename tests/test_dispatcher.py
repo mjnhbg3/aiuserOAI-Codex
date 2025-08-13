@@ -104,12 +104,8 @@ class DummyMessage:
 
 
 class FakeClient:
-    async def respond_chat(self, msgs, options):
-        async def gen():
-            for tok in ["Hello ", "from ", "GPT5!"]:
-                await asyncio.sleep(0)
-                yield tok
-        return gen()
+    async def respond_collect(self, msgs, options):
+        return {"text": "Hello from GPT5!", "images": []}
 
 
 @pytest.mark.asyncio
