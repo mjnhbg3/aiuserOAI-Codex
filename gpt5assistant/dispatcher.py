@@ -186,6 +186,43 @@ class Dispatcher:
                         inline_file_ids = []
                         inline_image_ids = []
 
+            # Include attachments from the replied-to message (one hop) so the model can edit/inspect them
+            if getattr(message, "reference", None):
+                try:
+                    ref = message.reference
+                    replied = ref.cached_message or await self.bot.get_channel(ref.channel_id).fetch_message(ref.message_id)
+                except Exception:
+                    replied = None
+                if replied and getattr(replied, "attachments", None):
+                    file_bytes_r: list[bytes] = []
+                    fnames_r: list[str] = []
+                    kinds_r: list[str] = []
+                    for a in replied.attachments:
+                        ctype = a.content_type or ""
+                        # Skip very large files (>20MB)
+                        try:
+                            if a.size and a.size > 20 * 1024 * 1024:
+                                continue
+                        except Exception:
+                            pass
+                        try:
+                            data = await a.read()
+                        except Exception:
+                            continue
+                        file_bytes_r.append(data)
+                        fnames_r.append(a.filename or "attachment")
+                        kinds_r.append(ctype)
+                    if file_bytes_r:
+                        try:
+                            ids_r = await self.client.index_files(file_bytes_r, fnames_r)
+                            for fid, ctype in zip(ids_r, kinds_r):
+                                if isinstance(ctype, str) and ctype.startswith("image/"):
+                                    inline_image_ids.append(fid)
+                                else:
+                                    inline_file_ids.append(fid)
+                        except Exception:
+                            pass
+
             options = ChatOptions(
                 model=gconf["model"],
                 tools=effective_tools,
