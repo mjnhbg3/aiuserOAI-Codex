@@ -44,6 +44,19 @@ class OpenAIClient:
             return None
         try:
             import httpx
+            # For resp_ files, try the responses API endpoint first
+            if file_id.startswith("resp_"):
+                url = f"{self._base_url}/responses/{file_id}/content"
+                headers = {
+                    "Authorization": f"Bearer {self._api_key}",
+                    "OpenAI-Beta": "assistants=v2",
+                }
+                async with httpx.AsyncClient(timeout=60) as http:
+                    r = await http.get(url, headers=headers)
+                    if r.status_code == 200:
+                        return r.content
+                
+            # Standard container file endpoint
             url = f"{self._base_url}/containers/{container_id}/files/{file_id}/content"
             headers = {
                 "Authorization": f"Bearer {self._api_key}",
@@ -674,47 +687,67 @@ class OpenAIClient:
             except Exception:
                 pass
 
-        # Try listing response files (if SDK supports it) to discover image assets
+        # Extract container ID from response for code interpreter files
         try:
-            # Some SDK versions expose responses.files.list(response_id)
-            files_api = getattr(self.client, "responses", None)
-            if files_api is not None and hasattr(files_api, "files") and hasattr(files_api.files, "list"):
-                try:
-                    # Try keyword first, then positional for older SDKs
-                    try:
-                        flist = await files_api.files.list(response_id=resp.id)
-                    except Exception:
-                        flist = await files_api.files.list(resp.id)
-                    items = getattr(flist, "data", None) or getattr(flist, "__dict__", {}).get("data")
-                    if isinstance(items, list):
-                        _dbg(f"responses.files.list: {len(items)} items")
-                        for it in items:
-                            obj = it if isinstance(it, dict) else getattr(it, "__dict__", {})
-                            fid = obj.get("id") or obj.get("file_id")
-                            fname = obj.get("filename") or obj.get("display_name") or obj.get("name")
-                            mime = obj.get("mime_type") or obj.get("mime")
-                            is_image = False
-                            if isinstance(mime, str) and mime.startswith("image/"):
-                                is_image = True
-                            if not is_image and isinstance(fname, str):
-                                low = fname.lower()
-                                if any(low.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff")):
-                                    is_image = True
-                            if is_image and isinstance(fid, str):
-                                file_ids_to_fetch.append(fid)
-                                low = (fname or "").strip().lower()
-                                if low and low not in filename_to_fileid:
-                                    filename_to_fileid[low] = fid
-                                    id_to_filename[fid] = low
-                            elif isinstance(fid, str):
-                                # non-image assets
-                                all_file_ids.add(fid)
-                                low = (fname or "").strip().lower()
-                                if low:
-                                    id_to_filename[fid] = low
-                except Exception:
-                    pass
-        except Exception:
+            # Check if this response has a container (code interpreter was used)
+            resp_container_id = None
+            resp_dict = getattr(resp, "__dict__", {})
+            _dbg(f"response object keys: {list(resp_dict.keys())}")
+            
+            # Check common locations for container ID
+            for key in ["container", "container_id", "containers"]:
+                if key in resp_dict:
+                    container_obj = resp_dict[key]
+                    _dbg(f"found {key}: {type(container_obj)} {container_obj}")
+                    if isinstance(container_obj, dict):
+                        resp_container_id = container_obj.get("id")
+                    elif hasattr(container_obj, "id"):
+                        resp_container_id = getattr(container_obj, "id", None)
+                    elif isinstance(container_obj, str):
+                        resp_container_id = container_obj
+                    if resp_container_id:
+                        break
+            
+            # Alternative: check for container ID in usage metadata
+            if not resp_container_id:
+                usage = getattr(resp, "usage", None) or resp_dict.get("usage")
+                if usage:
+                    _dbg(f"usage object: {type(usage)} {usage}")
+                    if isinstance(usage, dict):
+                        resp_container_id = usage.get("container_id")
+                    elif hasattr(usage, "container_id"):
+                        resp_container_id = getattr(usage, "container_id", None)
+            
+            # Last resort: scan the entire response for container-like IDs
+            if not resp_container_id:
+                def _scan_for_container_id(obj, path=""):
+                    nonlocal resp_container_id
+                    if resp_container_id:
+                        return
+                    if isinstance(obj, dict):
+                        for k, v in obj.items():
+                            if k in ("container_id", "id") and isinstance(v, str) and v.startswith("container_"):
+                                resp_container_id = v
+                                _dbg(f"found container id at {path}.{k}: {v}")
+                                return
+                            _scan_for_container_id(v, f"{path}.{k}")
+                    elif isinstance(obj, list):
+                        for i, item in enumerate(obj):
+                            _scan_for_container_id(item, f"{path}[{i}]")
+                _scan_for_container_id(resp_dict)
+            
+            if resp_container_id:
+                _dbg(f"detected response container_id: {resp_container_id}")
+                container_ids.add(resp_container_id)
+                # Map any resp_ file IDs to this container
+                for fid in list(all_file_ids):
+                    if fid.startswith("resp_"):
+                        cfile_container[fid] = resp_container_id
+                        cfile_ids.add(fid)
+            else:
+                _dbg("no container_id found in response")
+        except Exception as e:
+            _dbg(f"container detection exception: {e}")
             pass
 
         # Fetch any container-cited files first (highest confidence)
@@ -808,6 +841,10 @@ class OpenAIClient:
 
         _dbg(f"files.content: prioritized_ids={prioritized_ids}")
         for fid in prioritized_ids:
+            # Skip resp_ files - they should be handled via container API
+            if fid.startswith("resp_"):
+                _dbg(f"files.content: skipping resp_ file {fid} (should use container API)")
+                continue
             try:
                 file_resp = await self.client.files.content(fid)
                 # file_resp is an httpx.Response-like object with bytes in .read()
@@ -825,10 +862,16 @@ class OpenAIClient:
                 _dbg(f"files.content: failed fid={fid}")
                 continue
 
-        # Attempt to fetch any referenced cfile_* ids directly via known containers
+        # Attempt to fetch any referenced cfile_* and resp_* ids directly via known containers
         fetched_cfiles: set[str] = set()
-        _dbg(f"container fallback: cfile_ids={list(cfile_ids)}")
-        for cf in list(cfile_ids):
+        all_container_file_ids = list(cfile_ids)
+        # Also include resp_ files that were mapped to containers
+        for fid in all_file_ids:
+            if fid.startswith("resp_") and fid in cfile_container:
+                all_container_file_ids.append(fid)
+        
+        _dbg(f"container fallback: container_file_ids={all_container_file_ids}")
+        for cf in all_container_file_ids:
             try:
                 cid = cfile_container.get(cf)
                 if cid:
@@ -837,6 +880,9 @@ class OpenAIClient:
                     if chunk:
                         if _looks_like_image(chunk):
                             images.append(chunk)
+                            # Use filename from mentions if available
+                            fname = id_to_filename.get(cf)
+                            image_names.append(fname)
                         else:
                             name = id_to_filename.get(cf) or f"{cf}.bin"
                             files.append({"name": name, "bytes": chunk})
