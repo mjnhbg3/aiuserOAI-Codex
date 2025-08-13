@@ -889,8 +889,8 @@ class OpenAIClient:
                                         fid = it.get("id")
                                         path = it.get("path") or ""
                                         base = os.path.basename(path).lower() if path else ""
-                                        # If we still have unknown cfile ids without container mapping, try to fetch by id
-                                        if isinstance(fid, str) and fid.startswith("cfile_") and fid in cfile_ids and fid not in fetched_cfiles:
+                                        # If we see a container file id, try fetching it even if it wasn't cited earlier
+                                        if isinstance(fid, str) and fid.startswith("cfile_") and fid not in fetched_cfiles:
                                             _dbg(f"container list fetch by id: cid={cid} fid={fid}")
                                             chunk = await self._fetch_container_file(cid, fid)
                                             if chunk:
@@ -902,8 +902,15 @@ class OpenAIClient:
                                                 fetched_cfiles.add(fid)
                                                 _dbg(f"container list fetch: got bytes={len(chunk)} for {fid}")
                                         for want in list(needed):
-                                            if base == want:
-                                                _dbg(f"container list fetch by name: want={want} cid={cid} fid={fid}")
+                                            # Match by exact basename OR just by extension (paths may be hashed)
+                                            try:
+                                                import os as _os
+                                                wext = _os.path.splitext(want)[1].lower()
+                                                bext = _os.path.splitext(base)[1].lower() if base else ""
+                                            except Exception:
+                                                wext = bext = ""
+                                            if base == want or (wext and wext == bext):
+                                                _dbg(f"container list fetch by name/ext: want={want} base={base} cid={cid} fid={fid}")
                                                 chunk = await self._fetch_container_file(cid, fid)
                                                 if chunk:
                                                     if _looks_like_image(chunk):
