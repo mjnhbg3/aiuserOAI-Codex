@@ -528,7 +528,8 @@ class OpenAIClient:
                                         pass
                             elif ctype in ("output_file", "file"):
                                 fid = cdict.get("file_id") or cdict.get("id")
-                                fname = (cdict.get("filename") or cdict.get("name") or "").strip().lower()
+                                fname_raw = (cdict.get("filename") or cdict.get("name") or "").strip()
+                                fname = fname_raw.lower() if isinstance(fname_raw, str) else ""
                                 mime = cdict.get("mime_type") or cdict.get("mime")
                                 is_img = False
                                 if isinstance(mime, str) and mime.startswith("image/"):
@@ -537,13 +538,17 @@ class OpenAIClient:
                                     low = fname.lower()
                                     if any(low.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff")):
                                         is_img = True
-                                if is_img and isinstance(fid, str):
-                                    file_ids_to_fetch.append(fid)
-                                    if fname and fname not in filename_to_fileid:
-                                        filename_to_fileid[fname] = fid
-                                # Track all file_ids for potential sniffing later
                                 if isinstance(fid, str):
+                                    # Prioritize fetching this file id regardless of type; we'll sniff bytes later
+                                    file_ids_to_fetch.append(fid)
                                     all_file_ids.add(fid)
+                                    # Track filename mappings for nicer names on attachment
+                                    if fname:
+                                        filename_to_fileid.setdefault(fname, fid)
+                                        id_to_filename[fid] = fname
+                                    # If this looks like a container file id, remember it for container fetch fallback
+                                    if str(fid).startswith("cfile_"):
+                                        cfile_ids.add(fid)
             # Final safety pass: recursively scan the entire output for any stray image/file refs
             def _scan(obj: Any) -> None:
                 if isinstance(obj, dict):
