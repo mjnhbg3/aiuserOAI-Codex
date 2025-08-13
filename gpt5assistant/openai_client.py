@@ -934,9 +934,10 @@ class OpenAIClient:
         try:
             if self._api_key and (not files) and mentioned_filenames:
                 await asyncio.sleep(0.6)
-                import httpx, os
+                import httpx
+                import os
                 headers = {"Authorization": f"Bearer {self._api_key}", "OpenAI-Beta": "assistants=v2"}
-                # Derive desired extensions from mentioned filenames
+                # Desired extensions from mentioned filenames
                 desired_exts: set[str] = set()
                 for n in mentioned_filenames:
                     try:
@@ -944,25 +945,23 @@ class OpenAIClient:
                         if ext:
                             desired_exts.add(ext)
                     except Exception:
-                        pass
+                        continue
                 async with httpx.AsyncClient(timeout=30) as http:
+                    # Gather recent containers
                     search_containers: list[str] = []
                     try:
                         rc = await http.get(f"{self._base_url}/containers?limit=6", headers=headers)
                         if rc.status_code == 200:
-                            lst = rc.json().get("data") or []
-                            for it in lst[:6]:
+                            items = rc.json().get("data") or []
+                            for it in items[:6]:
                                 cid = it.get("id")
                                 if isinstance(cid, str):
                                     search_containers.append(cid)
                         _dbg(f"final fallback: containers searched={len(search_containers)}")
                     except Exception:
                         pass
-                    present = set()
-                    for f in files:
-                        nm = f.get("name")
-                        if isinstance(nm, str):
-                            present.add(nm)
+                    # Present names to avoid duplicates
+                    present = set(f.get("name") for f in files if isinstance(f.get("name"), str))
                     for cid in search_containers:
                         try:
                             r = await http.get(f"{self._base_url}/containers/{cid}/files?limit=10", headers=headers)
@@ -971,44 +970,40 @@ class OpenAIClient:
                                 continue
                             data = r.json()
                             items = data.get("data") or []
-                            # newest first
+                            # newest first if possible
                             try:
                                 items.sort(key=lambda x: x.get("created_at", 0), reverse=True)
                             except Exception:
                                 pass
-                            for it in items:
-                                try:
-                                    fid = it.get("id")
-                                    path = it.get("path") or ""
-                                    base = os.path.basename(path) if isinstance(path, str) else ""
-                                    ext = os.path.splitext(base)[1].lower() if base else ""
-                                    if desired_exts and ext not in desired_exts:
+                            for entry in items:
+                                fid = entry.get("id") if isinstance(entry, dict) else None
+                                path = entry.get("path") if isinstance(entry, dict) else None
+                                if not isinstance(fid, str) or not fid.startswith("cfile_"):
+                                    continue
+                                base = os.path.basename(path) if isinstance(path, str) else ""
+                                ext = os.path.splitext(base)[1].lower() if base else ""
+                                if desired_exts and ext not in desired_exts:
+                                    continue
+                                chunk = await self._fetch_container_file(cid, fid)
+                                if not chunk:
+                                    continue
+                                # Choose a friendly name
+                                selected_name = None
+                                for m in mentioned_filenames:
+                                    try:
+                                        if os.path.splitext(m)[1].lower() == ext and m not in present:
+                                            selected_name = m
+                                            break
+                                    except Exception:
                                         continue
-                                    if not isinstance(fid, str) or not fid.startswith("cfile_"):
-                                        continue
-                                    chunk = await self._fetch_container_file(cid, fid)
-                                    if not chunk:
-                                        continue
-                                    # Pick name from mentioned list that shares this extension, or use base
-                                    name: Optional[str] = None
-                                    for m in mentioned_filenames:
-                                        try:
-                                            if os.path.splitext(m)[1].lower() == ext and m not in present:
-                                                name = m
-                                                break
-                                        except Exception:
-                                            pass
-                                    if not name:
-                                        name = base or f"{fid}.bin"
-                                    files.append({"name": name, "bytes": chunk})
-                                    present.add(name)
-                                    _dbg(f"final fallback: fetched {name} from {cid}/{fid} bytes={len(chunk)}")
-                                    # If we've satisfied at least one requested extension, we can stop
-                                    if desired_exts and len(present) >= 1:
-                                        break
-                            except Exception:
-                                _dbg("final fallback: item loop exception")
-                                continue
+                                if not selected_name:
+                                    selected_name = base or f"{fid}.bin"
+                                files.append({"name": selected_name, "bytes": chunk})
+                                present.add(selected_name)
+                                _dbg(f"final fallback: fetched {selected_name} from {cid}/{fid} bytes={len(chunk)}")
+                                # Stop after attaching one matching file
+                                if desired_exts and len(present) >= 1:
+                                    break
                         except Exception:
                             _dbg("final fallback: containers list exception")
                             continue
