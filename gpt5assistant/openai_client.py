@@ -333,6 +333,8 @@ class OpenAIClient:
         container_citations: list[Dict[str, str]] = []  # {container_id, file_id, filename}
         files: list[Dict[str, Any]] = []  # {name, bytes}
         container_ids: set[str] = set()
+        cfile_ids: set[str] = set()
+        cfile_container: dict[str, str] = {}
         # Extract any filenames from the visible text for correlation (e.g., parabola.png, random_numbers.csv)
         try:
             import re
@@ -351,6 +353,26 @@ class OpenAIClient:
                 for msg in out:
                     m = msg if isinstance(msg, dict) else getattr(msg, "__dict__", {})
                     mtype = m.get("type") or getattr(msg, "type", None)
+                    # Message-level annotations
+                    mans = m.get("annotations") or getattr(msg, "annotations", None)
+                    if isinstance(mans, list):
+                        for ann in mans:
+                            ad = ann if isinstance(ann, dict) else getattr(ann, "__dict__", {})
+                            atype = str(ad.get("type", "")).lower().replace('.', '_').replace('-', '_')
+                            if ("container" in atype and "file" in atype and "citation" in atype):
+                                fid = ad.get("file_id")
+                                cid = ad.get("container_id")
+                                fname = (ad.get("filename") or ad.get("name") or "").strip()
+                                if isinstance(fid, str) and isinstance(cid, str):
+                                    container_citations.append({
+                                        "container_id": cid,
+                                        "file_id": fid,
+                                        "filename": fname,
+                                    })
+                                    container_ids.add(cid)
+                                    if str(fid).startswith("cfile_"):
+                                        cfile_ids.add(fid)
+                                        cfile_container[fid] = cid
                     # Direct image generation call
                     if mtype == "image_generation_call":
                         res = m.get("result") or getattr(msg, "result", None)
@@ -367,6 +389,8 @@ class OpenAIClient:
                         if isinstance(fid, str):
                             file_ids_to_fetch.append(fid)
                             all_file_ids.add(fid)
+                            if fid.startswith("cfile_"):
+                                cfile_ids.add(fid)
                         # Continue on to also scan nested structures on this message, if any
                     # Message content list
                     content = getattr(msg, "content", None)
@@ -394,6 +418,9 @@ class OpenAIClient:
                                                 "filename": fname,
                                             })
                                             container_ids.add(cid)
+                                            if str(fid).startswith("cfile_"):
+                                                cfile_ids.add(fid)
+                                                cfile_container[fid] = cid
                             if ctype in ("output_image", "image"):
                                 imgobj = cdict.get("image") or {}
                                 b64 = imgobj.get("b64_json") or cdict.get("b64_json")
@@ -410,6 +437,8 @@ class OpenAIClient:
                                 if isinstance(fid, str):
                                     file_ids_to_fetch.append(fid)
                                     all_file_ids.add(fid)
+                                    if fid.startswith("cfile_"):
+                                        cfile_ids.add(fid)
                                 # Filename mapping if present
                                 fname = (imgobj.get("filename") or cdict.get("filename") or cdict.get("name") or "").strip().lower()
                                 if fname and isinstance(fid, str) and fname not in filename_to_fileid:
@@ -448,6 +477,8 @@ class OpenAIClient:
                                                 if isinstance(fid2, str):
                                                     file_ids_to_fetch.append(fid2)
                                                     all_file_ids.add(fid2)
+                                                    if str(fid2).startswith("cfile_"):
+                                                        cfile_ids.add(fid2)
                                                 fname2 = (it.get("filename") or it.get("name") or "").strip().lower()
                                                 if fname2 and isinstance(fid2, str) and fname2 not in filename_to_fileid:
                                                     filename_to_fileid[fname2] = fid2
@@ -465,6 +496,8 @@ class OpenAIClient:
                                             if isinstance(fid, str):
                                                 file_ids_to_fetch.append(fid)
                                                 all_file_ids.add(fid)
+                                                if fid.startswith("cfile_"):
+                                                    cfile_ids.add(fid)
                                             fname = (it.get("filename") or it.get("name") or "").strip().lower()
                                             if fname and isinstance(fid, str) and fname not in filename_to_fileid:
                                                 filename_to_fileid[fname] = fid
@@ -533,6 +566,10 @@ class OpenAIClient:
                     mime = obj.get("mime_type") or obj.get("mime")
                     fname = obj.get("filename") or obj.get("name")
                     if isinstance(fid, str):
+                        if fid.startswith("cfile_"):
+                            cfile_ids.add(fid)
+                            if isinstance(cid, str):
+                                cfile_container[fid] = cid
                         is_img = False
                         if isinstance(mime, str) and mime.startswith("image/"):
                             is_img = True
@@ -726,6 +763,21 @@ class OpenAIClient:
                     else:
                         name = id_to_filename.get(fid) or f"{fid}.bin"
                         files.append({"name": name, "bytes": chunk})
+            except Exception:
+                continue
+
+        # Attempt to fetch any referenced cfile_* ids directly via containers
+        for cf in list(cfile_ids):
+            try:
+                cid = cfile_container.get(cf)
+                if cid:
+                    chunk = await self._fetch_container_file(cid, cf)
+                    if chunk:
+                        if _looks_like_image(chunk):
+                            images.append(chunk)
+                        else:
+                            name = id_to_filename.get(cf) or f"{cf}.bin"
+                            files.append({"name": name, "bytes": chunk})
             except Exception:
                 continue
 
