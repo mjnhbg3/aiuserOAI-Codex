@@ -18,7 +18,11 @@ class GPT5Assistant(commands.Cog):
         self.config = Config.get_conf(self, identifier=0xA15E1157, force_registration=True)
         self.config.register_guild(**DEFAULT_GUILD_CONFIG)
         # Global system-wide prompt
-        self.config.register_global(system_prompt="You are GPT-5, a helpful assistant. Keep replies concise.")
+        self.config.register_global(
+            system_prompt="You are GPT-5, a helpful assistant. Keep replies concise.",
+            diag_plain="Diagnostic ping: reply with the single word PONG.",
+            diag_tools="What is one major headline today? Provide a short sentence.",
+        )
         # Per-channel cutoff for forget
         self.config.register_channel(forget_after_ts=0)
         self._client: Optional[OpenAIClient] = None
@@ -66,6 +70,21 @@ class GPT5Assistant(commands.Cog):
     async def gpt5_config(self, ctx: commands.Context) -> None:
         """Configure GPT-5 Assistant."""
         pass
+
+    @gpt5_config.group(name="diag")
+    async def gpt5_config_diag(self, ctx: commands.Context) -> None:
+        """Configure gpt5 diag test prompts."""
+        pass
+
+    @gpt5_config_diag.command(name="plain")
+    async def gpt5_config_diag_plain(self, ctx: commands.Context, *, text: str) -> None:
+        await self.config.diag_plain.set(text)
+        await ctx.send("Set diag plain prompt.")
+
+    @gpt5_config_diag.command(name="tools")
+    async def gpt5_config_diag_tools(self, ctx: commands.Context, *, text: str) -> None:
+        await self.config.diag_tools.set(text)
+        await ctx.send("Set diag tools prompt.")
 
     @gpt5_config.command(name="model")
     async def gpt5_config_model(self, ctx: commands.Context, *, name: str) -> None:
@@ -476,13 +495,19 @@ class GPT5Assistant(commands.Cog):
 
     @gpt5.command(name="diag")
     @checks.admin_or_permissions(manage_guild=True)
-    async def gpt5_diag(self, ctx: commands.Context) -> None:
-        """Run a verbose Responses API diagnostic and show tool settings/payloads."""
+    async def gpt5_diag(self, ctx: commands.Context, *, prompt: Optional[str] = None) -> None:
+        """Run a verbose Responses API diagnostic and show tool settings/payloads.
+
+        Optionally provide a one-off tools test prompt: [p]gpt5 diag <prompt>
+        """
         client = await self._ensure_client()
         g = await self.config.guild(ctx.guild).all()
         tools = g.get("tools", {}) or {}
         model = g.get("model", "gpt-5")
         kb = g.get("file_kb_id") or None
+        # Load configurable diag prompts (global)
+        d_plain = await self.config.diag_plain()
+        d_tools = prompt or (await self.config.diag_tools())
         try:
             import openai as _oai
             sdk_ver = getattr(_oai, "__version__", "unknown")
@@ -492,11 +517,7 @@ class GPT5Assistant(commands.Cog):
         # Prepare a minimal input
         from .openai_client import ChatOptions
         messages = [
-            {"role": "system", "content": g.get("system_prompt", "You are a helpful assistant.")},
-            {
-                "role": "user",
-                "content": "Diagnostic ping: reply with the single word PONG.",
-            },
+            {"role": "user", "content": d_plain or "Diagnostic ping: reply with the single word PONG."},
         ]
 
         opts = ChatOptions(
@@ -548,7 +569,7 @@ class GPT5Assistant(commands.Cog):
             err_plain = f"{type(e).__name__}: {e} (status={status})\n{str(body)[:500] if body else ''}"
         try:
             # Short tool test prompt
-            messages[-1]["content"] = "What is one major headline today? Provide a short sentence."
+            messages[-1]["content"] = d_tools or "What is one major headline today? Provide a short sentence."
             # Compose the actual tools payload we will send
             eff_tools = {}
             eff_tools.update(tools)
