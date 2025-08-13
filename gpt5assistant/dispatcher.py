@@ -321,13 +321,13 @@ class Dispatcher:
                     file_bytes_r: list[bytes] = []
                     fnames_r: list[str] = []
                     kinds_r: list[str] = []
-                need_image_file_ids_r = bool(effective_tools.get("code_interpreter"))
-                for a in replied.attachments:
-                    ctype = a.content_type or ""
-                    # Skip very large files (>20MB)
-                    try:
-                        if a.size and a.size > 20 * 1024 * 1024:
-                            continue
+                    need_image_file_ids_r = bool(effective_tools.get("code_interpreter"))
+                    for a in replied.attachments:
+                        ctype = a.content_type or ""
+                        # Skip very large files (>20MB)
+                        try:
+                            if a.size and a.size > 20 * 1024 * 1024:
+                                continue
                         except Exception:
                             pass
                         # Prefer URL for images
