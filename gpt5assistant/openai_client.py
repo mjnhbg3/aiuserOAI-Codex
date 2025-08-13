@@ -133,11 +133,6 @@ class OpenAIClient:
         enable_fs = bool(options.tools.get("file_search") and options.vector_store_id)
 
         # For reliability with tool calls, use non-streaming create and yield the final text.
-        extra_kwargs: Dict[str, Any] = {}
-        if options.inline_image_ids:
-            # Hint the model that we expect vision + text
-            extra_kwargs["modalities"] = ["text", "vision"]
-
         resp = await self.client.responses.create(
             model=options.model,
             input=self._to_input(
@@ -152,7 +147,6 @@ class OpenAIClient:
             max_output_tokens=options.max_tokens,
             tool_choice="auto",
             instructions=options.system_prompt,
-            **extra_kwargs,
         )
         # Extract output text robustly across SDK variants
         text = None

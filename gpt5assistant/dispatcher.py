@@ -279,7 +279,7 @@ class Dispatcher:
                     await message.channel.send(file=file)
                 # Minimal fallback: if absolutely nothing, inform user without extra requests
                 if not text.strip() and not images:
-                    await message.channel.send("I couldn’t produce a result for that. Try rephrasing or mention me directly.")
+                    await message.channel.send("I couldn’t produce a result for that. If you asked for an image, ensure the image tool is enabled: [p]gpt5 config tools enable image.")
             except Exception as e:
                 await message.channel.send(f"Sorry, I hit an error: {e}")
 
