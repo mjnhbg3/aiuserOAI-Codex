@@ -606,15 +606,17 @@ class GPT5Assistant(commands.Cog):
             contents: list[bytes] = []
             names: list[str] = []
             kinds: list[str] = []
+            need_image_file_ids = bool(tools.get("code_interpreter"))
             for a in ctx.message.attachments:
                 ctype = a.content_type or ""
                 # Prefer URL for images
                 if isinstance(ctype, str) and ctype.startswith("image/"):
                     try:
                         inline_image_urls.append(a.url)  # type: ignore[attr-defined]
-                        names.append(a.filename or "attachment")
-                        kinds.append(ctype)
-                        continue
+                        if not need_image_file_ids:
+                            names.append(a.filename or "attachment")
+                            kinds.append(ctype)
+                            continue
                     except Exception:
                         pass
                 try:
@@ -635,6 +637,8 @@ class GPT5Assistant(commands.Cog):
                     for fid, ctype in zip(ids, kinds):
                         if isinstance(ctype, str) and ctype.startswith("image/"):
                             inline_image_ids.append(fid)
+                            if need_image_file_ids:
+                                inline_file_ids.append(fid)
                         else:
                             inline_file_ids.append(fid)
                 except Exception:

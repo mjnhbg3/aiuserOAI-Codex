@@ -258,6 +258,7 @@ class Dispatcher:
                 file_bytes: list[bytes] = []
                 fnames: list[str] = []
                 kinds: list[str] = []
+                need_image_file_ids = bool(effective_tools.get("code_interpreter"))
                 for a in message.attachments:
                     ctype = a.content_type or ""
                     # Skip very large files (>20MB) to avoid timeouts
@@ -270,10 +271,11 @@ class Dispatcher:
                     if isinstance(ctype, str) and ctype.startswith("image/"):
                         try:
                             inline_image_urls.append(a.url)  # type: ignore[attr-defined]
-                            # Do not upload image bytes when URL is available
-                            fnames.append(a.filename or "attachment")
-                            kinds.append(ctype)
-                            continue
+                            # Also upload image bytes when code_interpreter is enabled so container can access the file
+                            if not need_image_file_ids:
+                                fnames.append(a.filename or "attachment")
+                                kinds.append(ctype)
+                                continue
                         except Exception:
                             pass
                     try:
@@ -295,6 +297,9 @@ class Dispatcher:
                         for fid, ctype in zip(ids, kinds):
                             if isinstance(ctype, str) and ctype.startswith("image/"):
                                 inline_image_ids.append(fid)
+                                # Also provide as input_file so code_interpreter container receives it
+                                if need_image_file_ids:
+                                    inline_file_ids.append(fid)
                             else:
                                 inline_file_ids.append(fid)
                     except Exception:
@@ -316,21 +321,23 @@ class Dispatcher:
                     file_bytes_r: list[bytes] = []
                     fnames_r: list[str] = []
                     kinds_r: list[str] = []
-                    for a in replied.attachments:
-                        ctype = a.content_type or ""
-                        # Skip very large files (>20MB)
-                        try:
-                            if a.size and a.size > 20 * 1024 * 1024:
-                                continue
+                need_image_file_ids_r = bool(effective_tools.get("code_interpreter"))
+                for a in replied.attachments:
+                    ctype = a.content_type or ""
+                    # Skip very large files (>20MB)
+                    try:
+                        if a.size and a.size > 20 * 1024 * 1024:
+                            continue
                         except Exception:
                             pass
                         # Prefer URL for images
                         if isinstance(ctype, str) and ctype.startswith("image/"):
                             try:
                                 inline_image_urls.append(a.url)  # type: ignore[attr-defined]
-                                fnames_r.append(a.filename or "attachment")
-                                kinds_r.append(ctype)
-                                continue
+                                if not need_image_file_ids_r:
+                                    fnames_r.append(a.filename or "attachment")
+                                    kinds_r.append(ctype)
+                                    continue
                             except Exception:
                                 pass
                         try:
@@ -346,6 +353,8 @@ class Dispatcher:
                             for fid, ctype in zip(ids_r, kinds_r):
                                 if isinstance(ctype, str) and ctype.startswith("image/"):
                                     inline_image_ids.append(fid)
+                                    if need_image_file_ids_r:
+                                        inline_file_ids.append(fid)
                                 else:
                                     inline_file_ids.append(fid)
                         except Exception:
