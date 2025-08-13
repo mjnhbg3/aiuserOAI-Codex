@@ -14,7 +14,7 @@ from .messages import build_messages, gather_history
 from .openai_client import ChatOptions, OpenAIClient
 from .utils.chunking import chunk_message
 from .utils.streaming import stream_text_buffered
-from .utils.classifiers import looks_like_image_request
+from .utils.classifiers import looks_like_image_request, looks_like_image_edit_request
 from .utils.variables import format_variables
 from .utils.filters import apply_removelist
 
@@ -232,16 +232,38 @@ class Dispatcher:
         if lock.locked():
             return
         async with lock:
-            # If there is an attachment, try edit
+            # Find candidate base image from current message or the referenced message
+            base_image_bytes: Optional[bytes] = None
+            # Current message attachment
             attachment = next((a for a in message.attachments if a.content_type and a.content_type.startswith("image/")), None)
+            if attachment is None and message.reference:
+                try:
+                    ref = message.reference
+                    replied = ref.cached_message or await self.bot.get_channel(ref.channel_id).fetch_message(ref.message_id)
+                    attachment = next(
+                        (a for a in getattr(replied, "attachments", []) if a.content_type and a.content_type.startswith("image/")),
+                        None,
+                    )
+                except Exception:
+                    attachment = None
+
+            # Decide whether this is an edit request or a fresh generation
+            is_edit = bool(attachment and looks_like_image_edit_request(content))
             try:
-                if attachment is not None:
-                    data = await attachment.read()
-                    img = await self.client.edit_image(data, content)
-                else:
-                    img = await self.client.generate_image(content)
+                async with message.channel.typing():
+                    if is_edit and attachment is not None:
+                        base_image_bytes = await attachment.read()
+                        img = await self.client.edit_image(base_image_bytes, content)
+                        caption = "Sure — I updated the image as requested."
+                    else:
+                        img = await self.client.generate_image(content)
+                        # Construct a friendly caption
+                        preview = content.strip()
+                        if len(preview) > 80:
+                            preview = preview[:77] + "…"
+                        caption = f"Sure — here’s an image for: {preview}"
             except Exception as e:
                 await message.channel.send(f"Image generation failed: {e}")
                 return
             file = discord.File(BytesIO(img), filename="image.png")
-            await message.channel.send(file=file, content=f"Prompt: {content}")
+            await message.channel.send(file=file, content=caption)
