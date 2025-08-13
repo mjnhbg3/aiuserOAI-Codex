@@ -376,6 +376,13 @@ class Dispatcher:
                     "If the user asks to describe or edit an image, use the provided input_image parts "
                     "as your source rather than referencing prior response or image IDs."
                 )
+            # If code interpreter is enabled, politely discourage sandbox links in text
+            if effective_tools.get("code_interpreter"):
+                sys_prompt_aug = (
+                    f"{sys_prompt_aug}\n\n"
+                    "When using the code interpreter and creating files, do not include sandbox:/mnt/data download links in your message."
+                    " Refer to files by name only; I will attach the actual files to the chat."
+                )
 
             options = ChatOptions(
                 model=gconf["model"],
@@ -414,9 +421,11 @@ class Dispatcher:
                     result = await self.client.respond_collect(msgs, options)
                 text = result.get("text", "")
                 images = result.get("images") or []
+                image_names = result.get("image_names") or [None] * len(images)
                 files = result.get("files") or []
                 # Identify any sandbox container links like [name](sandbox:/mnt/data/...) to replace with attachment URLs
-                referenced_names: list[str] = []
+                # Track both the label and the filename extracted from the link target.
+                refs: list[tuple[str, str]] = []  # (label, filename)
                 if text:
                     i = 0
                     n = len(text)
@@ -433,9 +442,21 @@ class Dispatcher:
                             break
                         label = text[lb + 1:rb]
                         link = text[rb + 2:rp]
-                        if (link.startswith('sandbox:') or link.startswith('/mnt/data')) and label:
-                            if label not in referenced_names:
-                                referenced_names.append(label)
+                        if (link.startswith('sandbox:') or link.startswith('/mnt/data')):
+                            # Extract filename from the path
+                            fname = link
+                            try:
+                                # strip scheme and split on /
+                                if link.startswith('sandbox:'):
+                                    path = link.split(':', 1)[1]
+                                else:
+                                    path = link
+                                parts = path.split('/')
+                                if parts:
+                                    fname = parts[-1] or fname
+                            except Exception:
+                                pass
+                            refs.append((label, fname))
                         i = rp + 1
                 if patterns:
                     # recent authors for {authorname}
@@ -450,20 +471,23 @@ class Dispatcher:
                     )
                 # If we need to replace sandbox links, post attachments first to get working URLs
                 name_to_url: dict[str, str] = {}
-                if referenced_names and (images or files):
+                if refs and (images or files):
                     # Send images with filenames matching referenced names when possible
-                    img_name_idx = 0
+                    used_img = [False] * len(images)
                     for idx, img in enumerate(images):
                         try:
+                            # Prefer a referenced filename from sandbox links
                             fname = None
-                            # assign the next referenced image-looking name if available
-                            while img_name_idx < len(referenced_names):
-                                candidate = referenced_names[img_name_idx]
-                                img_name_idx += 1
-                                low = candidate.lower()
+                            for (label, target) in refs:
+                                low = target.lower()
                                 if any(low.endswith(ext) for ext in ('.png','.jpg','.jpeg','.gif','.webp','.bmp','.tif','.tiff')):
-                                    fname = candidate
-                                    break
+                                    # if this referenced filename hasn't been mapped yet, use it
+                                    if target not in name_to_url:
+                                        fname = target
+                                        break
+                            # Otherwise fallback to image_names provided by client
+                            if not fname and idx < len(image_names) and isinstance(image_names[idx], str) and image_names[idx]:
+                                fname = image_names[idx]  # type: ignore[index]
                             if not fname:
                                 fname = f"image_{idx+1}.png"
                             msg_img = await message.channel.send(file=discord.File(BytesIO(img), filename=fname))
@@ -509,10 +533,31 @@ class Dispatcher:
                                 break
                             label = text[lb + 1:rb]
                             link = text[rb + 2:rp]
-                            if (link.startswith('sandbox:') or link.startswith('/mnt/data')) and label in name_to_url:
+                            # Replace sandbox links with attachment URL based on target filename
+                            if (link.startswith('sandbox:') or link.startswith('/mnt/data')):
+                                # extract filename
+                                target = link
+                                if link.startswith('sandbox:'):
+                                    target = link.split(':', 1)[1]
+                                target_name = target.split('/')[-1] if '/' in target else target
+                                # find a matching mapping by exact filename
+                                url = name_to_url.get(target_name)
+                                if not url:
+                                    # try case-insensitive match
+                                    for k, v in name_to_url.items():
+                                        if k.lower() == target_name.lower():
+                                            url = v
+                                            break
+                                if url:
+                                    out.append(text[i:lb])
+                                    out.append(f"[{label}]({url})")
+                                    i = rp + 1
+                                    continue
+                                # If no mapping, drop the sandbox link and leave label
                                 out.append(text[i:lb])
-                                out.append(f"[{label}]({name_to_url[label]})")
+                                out.append(label)
                                 i = rp + 1
+                                continue
                             else:
                                 out.append(text[i:rp+1])
                                 i = rp + 1
@@ -522,7 +567,7 @@ class Dispatcher:
                     for ch in chunk_message(text):
                         await message.channel.send(ch)
                 # If we didn't pre-send attachments, send them now
-                if not referenced_names:
+                if not refs:
                     for idx, img in enumerate(images):
                         file = discord.File(BytesIO(img), filename=f"image_{idx+1}.png")
                         await message.channel.send(file=file)

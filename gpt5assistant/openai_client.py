@@ -319,6 +319,7 @@ class OpenAIClient:
 
         # Images
         images: list[bytes] = []
+        image_names: list[Optional[str]] = []
         image_urls: list[str] = []
         file_ids_to_fetch: list[str] = []
         all_file_ids: set[str] = set()
@@ -350,6 +351,7 @@ class OpenAIClient:
                         if isinstance(res, str) and res.strip():
                             try:
                                 images.append(base64.b64decode(res))
+                                image_names.append(None)
                             except Exception:
                                 pass
                         url = m.get("url") or getattr(msg, "url", None)
@@ -389,6 +391,7 @@ class OpenAIClient:
                                 if b64:
                                     try:
                                         images.append(base64.b64decode(b64))
+                                        image_names.append(None)
                                     except Exception:
                                         pass
                                 url = imgobj.get("url") or cdict.get("url")
@@ -537,6 +540,13 @@ class OpenAIClient:
                             r = await http.get(u)
                             if r.status_code == 200:
                                 images.append(r.content)
+                                try:
+                                    from urllib.parse import urlparse
+                                    import os
+                                    path = urlparse(u).path
+                                    image_names.append(os.path.basename(path) or None)
+                                except Exception:
+                                    image_names.append(None)
                         except Exception:
                             continue
             except Exception:
@@ -615,6 +625,12 @@ class OpenAIClient:
                         return False
                     if _looks_like_image(chunk):
                         images.append(chunk)
+                        # Use display filename if available
+                        try:
+                            fname_disp = (cit.get("filename") or "").strip() or None
+                            image_names.append(fname_disp)
+                        except Exception:
+                            image_names.append(None)
                     else:
                         name = fname or f"{cit.get('file_id','cfile')}.bin"
                         files.append({"name": name, "bytes": chunk})
@@ -669,13 +685,15 @@ class OpenAIClient:
                 if chunk:
                     if _looks_like_image(chunk):
                         images.append(chunk)
+                        # record name if known
+                        image_names.append(id_to_filename.get(fid))
                     else:
                         name = id_to_filename.get(fid) or f"{fid}.bin"
                         files.append({"name": name, "bytes": chunk})
             except Exception:
                 continue
 
-        return {"text": text or "", "images": images, "files": files}
+        return {"text": text or "", "images": images, "image_names": image_names, "files": files}
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
     async def generate_image(
