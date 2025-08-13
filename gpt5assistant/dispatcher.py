@@ -172,7 +172,13 @@ class Dispatcher:
                     except Exception:
                         continue
                     file_bytes.append(data)
-                    fnames.append(a.filename or "attachment")
+                    fname = a.filename or "attachment"
+                    fnames.append(fname)
+                    # Fallback to filename extension when content_type is missing
+                    if not ctype and "." in fname:
+                        ext = fname.lower().rsplit(".", 1)[-1]
+                        if ext in {"png","jpg","jpeg","gif","webp","bmp","tif","tiff","svg"}:
+                            ctype = f"image/{'jpeg' if ext=='jpg' else ext}"
                     kinds.append(ctype)
                 if file_bytes:
                     try:
