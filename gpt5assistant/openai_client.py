@@ -399,8 +399,18 @@ class OpenAIClient:
                     # File IDs (favor likely image mime)
                     fid = obj.get("file_id") or obj.get("id")
                     mime = obj.get("mime_type") or obj.get("mime")
+                    fname = obj.get("filename") or obj.get("name")
                     if isinstance(fid, str):
-                        if (isinstance(mime, str) and mime.startswith("image/")) or ("image" in str(obj.get("type", "")).lower()):
+                        is_img = False
+                        if isinstance(mime, str) and mime.startswith("image/"):
+                            is_img = True
+                        if not is_img and isinstance(fname, str):
+                            low = fname.lower()
+                            if any(low.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff")):
+                                is_img = True
+                        if not is_img and ("image" in str(obj.get("type", "")).lower()):
+                            is_img = True
+                        if is_img:
                             file_ids_to_fetch.append(fid)
                     for v in obj.values():
                         _scan(v)
@@ -429,6 +439,34 @@ class OpenAIClient:
                             continue
             except Exception:
                 pass
+
+        # Try listing response files (if SDK supports it) to discover image assets
+        try:
+            # Some SDK versions expose responses.files.list(response_id)
+            files_api = getattr(self.client, "responses", None)
+            if files_api is not None and hasattr(files_api, "files") and hasattr(files_api.files, "list"):
+                try:
+                    flist = await files_api.files.list(resp.id)
+                    items = getattr(flist, "data", None) or getattr(flist, "__dict__", {}).get("data")
+                    if isinstance(items, list):
+                        for it in items:
+                            obj = it if isinstance(it, dict) else getattr(it, "__dict__", {})
+                            fid = obj.get("id") or obj.get("file_id")
+                            fname = obj.get("filename") or obj.get("name")
+                            mime = obj.get("mime_type") or obj.get("mime")
+                            is_image = False
+                            if isinstance(mime, str) and mime.startswith("image/"):
+                                is_image = True
+                            if not is_image and isinstance(fname, str):
+                                low = fname.lower()
+                                if any(low.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff")):
+                                    is_image = True
+                            if is_image and isinstance(fid, str):
+                                file_ids_to_fetch.append(fid)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
         # Fetch any file ids via OpenAI files.content
         for fid in file_ids_to_fetch:
