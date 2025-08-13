@@ -229,13 +229,24 @@ class Dispatcher:
             except Exception:
                 code_container_type = None
 
+            # If current or replied-to attachments are present, gently steer the model
+            # to use them directly instead of referencing prior tool call IDs.
+            sys_prompt_aug = system_prompt
+            if (inline_image_ids or inline_file_ids):
+                sys_prompt_aug = (
+                    f"{system_prompt}\n\n"
+                    "You have access to the user's current attachments in this turn. "
+                    "If the user asks to describe or edit an image, use the provided input_image parts "
+                    "as your source rather than referencing prior response or image IDs."
+                )
+
             options = ChatOptions(
                 model=gconf["model"],
                 tools=effective_tools,
                 reasoning=gconf["reasoning"],
                 max_tokens=gconf["max_tokens"],
                 temperature=gconf["temperature"],
-                system_prompt=system_prompt,
+                system_prompt=sys_prompt_aug,
                 file_ids=None,
                 vector_store_id=None,
                 inline_file_ids=inline_file_ids or None,
@@ -288,7 +299,22 @@ class Dispatcher:
                 if not text.strip() and not images:
                     await message.channel.send("I couldn’t produce a result for that. If you asked for an image, ensure the image tool is enabled: [p]gpt5 config tools enable image.")
             except Exception as e:
-                await message.channel.send(f"Sorry, I hit an error: {e}")
+                # Try to extract body/status for clearer diagnostics
+                status = getattr(e, "status_code", None) or getattr(e, "status", None)
+                body = None
+                resp = getattr(e, "response", None)
+                try:
+                    if resp and hasattr(resp, "json"):
+                        body = resp.json()
+                except Exception:
+                    body = None
+                if body:
+                    preview = str(body)
+                    if len(preview) > 700:
+                        preview = preview[:700] + "…"
+                    await message.channel.send(f"Sorry, I hit an error: {type(e).__name__} (status={status})\n{preview}")
+                else:
+                    await message.channel.send(f"Sorry, I hit an error: {e}")
 
     async def _image_path(self, message: discord.Message, content: str, gconf: Dict[str, Any]) -> None:
         lock = self._get_lock(message.channel.id)
