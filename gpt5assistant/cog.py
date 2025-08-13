@@ -63,7 +63,7 @@ class GPT5Assistant(commands.Cog):
             f"Ephemeral: {g['ephemeral']} Allowed channels: {len(g['allowed_channels'])}\n"
             f"Respond on mention: {g.get('respond_on_mention', True)}\n"
             f"Random autoreply: {g.get('random_autoreply', False)} rate={g.get('random_rate', 0.0)}\n"
-            f"History: backread_msgs={g.get('messages_backread', 25)} backread_images={g.get('images_backread', 0)} backread_seconds={g.get('messages_backread_seconds', 1800)} include_others={g.get('include_others', True)}"
+            f"History: backread_msgs={g.get('messages_backread', 25)} backread_images={g.get('images_backread', 0)} backread_seconds={g.get('messages_backread_seconds', 1800)} backread_images_seconds={g.get('images_backread_seconds', 1800)} include_others={g.get('include_others', True)}"
         )
 
     @gpt5.group(name="config")
@@ -301,6 +301,15 @@ class GPT5Assistant(commands.Cog):
         await self.config.guild(ctx.guild).messages_backread_seconds.set(max(0, n))
         await ctx.send(f"Backread seconds gap set to {n}.")
 
+    @gpt5_config_backread.command(name="imageseconds")
+    async def gpt5_config_backread_imageseconds(self, ctx: commands.Context, n: int) -> None:
+        """Set how many seconds old images can be before being excluded from history.
+
+        Example: [p]gpt5 config backread imageseconds 600
+        """
+        await self.config.guild(ctx.guild).images_backread_seconds.set(max(0, n))
+        await ctx.send(f"Images backread seconds set to {n}.")
+
     @gpt5_config.command(name="filters")
     async def gpt5_config_filters(self, ctx: commands.Context, action: str, *, pattern: str = "") -> None:
         """Manage remove-list regex filters: add|remove <pattern>, list."""
@@ -372,6 +381,7 @@ class GPT5Assistant(commands.Cog):
                 f"backread_msgs=`{g.get('messages_backread', 0)}`\n"
                 f"backread_images=`{g.get('images_backread', 0)}`\n"
                 f"backread_seconds=`{g.get('messages_backread_seconds', 0)}`\n"
+                f"backread_images_seconds=`{g.get('images_backread_seconds', 1800)}`\n"
                 f"include_others=`{g.get('include_others', True)}`"
             ),
             inline=False,

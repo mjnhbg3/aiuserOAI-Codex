@@ -184,11 +184,12 @@ class Dispatcher:
                         else:
                             earliest_dt = earliest_ts
                     last_time = message.created_at
+                    images_time_limit = int(gconf.get("images_backread_seconds", 1800))
                     # Iterate most recent first, collect image URLs from allowed authors
                     async for msg in message.channel.history(limit=int(gconf.get("messages_backread", 25)), before=message, oldest_first=False):
-                        # Respect time window
+                        # Respect image-specific time window
                         try:
-                            if last_time and abs((last_time - msg.created_at).total_seconds()) > int(gconf.get("messages_backread_seconds", 1800)):
+                            if last_time and abs((last_time - msg.created_at).total_seconds()) > images_time_limit:
                                 break
                         except Exception:
                             pass

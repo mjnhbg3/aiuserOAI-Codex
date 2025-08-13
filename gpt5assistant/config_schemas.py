@@ -42,6 +42,7 @@ class GuildConfig(TypedDict, total=False):
     messages_backread: int
     messages_backread_seconds: int
     images_backread: int
+    images_backread_seconds: int
     # Response filters
     removelist_regexes: List[str]
     # Prompt overrides
@@ -86,6 +87,7 @@ DEFAULT_GUILD_CONFIG: GuildConfig = {
     "messages_backread": 25,
     "messages_backread_seconds": 1800,
     "images_backread": 3,
+    "images_backread_seconds": 1800,
     "removelist_regexes": [],
     # Debug toggles
     "debug_attachments": False,
