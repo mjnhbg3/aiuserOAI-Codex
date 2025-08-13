@@ -77,6 +77,22 @@ class GPT5Assistant(commands.Cog):
         """Configure gpt5 diag test prompts."""
         pass
 
+    @gpt5_config.group(name="debug")
+    @checks.admin_or_permissions(manage_guild=True)
+    async def gpt5_config_debug(self, ctx: commands.Context) -> None:
+        """Debug toggles for troubleshooting (admin only)."""
+        pass
+
+    @gpt5_config_debug.command(name="attachments")
+    async def gpt5_config_debug_attachments(self, ctx: commands.Context, value: str) -> None:
+        """Enable or disable debug notes when sending attachments in normal replies.
+
+        Usage: [p]gpt5 config debug attachments on|off
+        """
+        flag = value.lower() in {"on", "true", "1", "enable", "enabled"}
+        await self.config.guild(ctx.guild).debug_attachments.set(flag)
+        await ctx.send(f"Debug attachments {'enabled' if flag else 'disabled'}.")
+
     @gpt5_config_diag.command(name="plain")
     async def gpt5_config_diag_plain(self, ctx: commands.Context, *, text: str) -> None:
         await self.config.diag_plain.set(text)

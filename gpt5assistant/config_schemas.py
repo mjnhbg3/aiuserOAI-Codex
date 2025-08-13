@@ -87,6 +87,8 @@ DEFAULT_GUILD_CONFIG: GuildConfig = {
     "messages_backread_seconds": 1800,
     "images_backread": 3,
     "removelist_regexes": [],
+    # Debug toggles
+    "debug_attachments": False,
     "role_prompts": {},
     "member_prompts": {},
 }

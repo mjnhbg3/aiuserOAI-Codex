@@ -423,6 +423,14 @@ class Dispatcher:
                 images = result.get("images") or []
                 image_names = result.get("image_names") or [None] * len(images)
                 files = result.get("files") or []
+                # Optional debug note for admins
+                try:
+                    if bool(gconf.get("debug_attachments", False)):
+                        await message.channel.send(
+                            f"[debug] result: text={len(text or '')}B images={len(images)} files={len(files)}"
+                        )
+                except Exception:
+                    pass
                 # Identify any sandbox container links like [name](sandbox:/mnt/data/...) to replace with attachment URLs
                 # Track both the label and the filename extracted from the link target.
                 refs: list[tuple[str, str]] = []  # (label, filename)
@@ -507,10 +515,20 @@ class Dispatcher:
                                 await message.channel.send(f"Generated a file '{name}' (~{len(data)//1024} KB), but it's too large to attach here.")
                                 continue
                             msg_file = await message.channel.send(file=discord.File(BytesIO(data), filename=name))
+                            try:
+                                if bool(gconf.get("debug_attachments", False)):
+                                    await message.channel.send(f"[debug] pre-sent file: {name} -> {(msg_file.attachments[0].url if msg_file.attachments else 'no attachment')}" )
+                            except Exception:
+                                pass
                             if msg_file.attachments:
                                 att = msg_file.attachments[0]
                                 name_to_url[att.filename] = att.url
                         except Exception:
+                            try:
+                                if bool(gconf.get("debug_attachments", False)):
+                                    await message.channel.send(f"[debug] failed to pre-send file: {name}")
+                            except Exception:
+                                pass
                             continue
                     # Replace sandbox links with working attachment URLs
                     if name_to_url and text:
@@ -581,8 +599,18 @@ class Dispatcher:
                                 await message.channel.send(f"Generated a file '{name}' (~{len(data)//1024} KB), but it's too large to attach here.")
                                 continue
                             file = discord.File(BytesIO(data), filename=name)
-                            await message.channel.send(file=file)
+                            msg = await message.channel.send(file=file)
+                            try:
+                                if bool(gconf.get("debug_attachments", False)):
+                                    await message.channel.send(f"[debug] sent file: {name} -> {(msg.attachments[0].url if msg.attachments else 'no attachment')}" )
+                            except Exception:
+                                pass
                         except Exception:
+                            try:
+                                if bool(gconf.get("debug_attachments", False)):
+                                    await message.channel.send(f"[debug] failed to send file: {item.get('name', 'attachment.bin')}")
+                            except Exception:
+                                pass
                             continue
                 # Minimal fallback
                 if not text.strip() and not images and not files:
