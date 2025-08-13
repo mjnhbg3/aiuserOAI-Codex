@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional
 
 from openai import AsyncOpenAI
@@ -869,6 +870,53 @@ class OpenAIClient:
                                         continue
                             except Exception:
                                 continue
+        except Exception:
+                pass
+
+        # De-duplicate images by content (hash) and keep aligned names
+        try:
+            if images:
+                # Ensure image_names length matches images length
+                if len(image_names) < len(images):
+                    image_names.extend([None] * (len(images) - len(image_names)))
+                seen_hashes: set[str] = set()
+                dedup_images: list[bytes] = []
+                dedup_names: list[Optional[str]] = []
+                for img, name in zip(images, image_names):
+                    try:
+                        h = sha256(img).hexdigest()
+                    except Exception:
+                        # If hashing fails, fall back to length-based key
+                        h = f"len:{len(img)}"
+                    if h in seen_hashes:
+                        continue
+                    seen_hashes.add(h)
+                    dedup_images.append(img)
+                    dedup_names.append(name)
+                images = dedup_images
+                image_names = dedup_names
+        except Exception:
+            # On any error, keep originals
+            pass
+
+        # De-duplicate files by content (hash) with name preservation
+        try:
+            if files:
+                seen_hashes: set[str] = set()
+                dedup_files: list[Dict[str, Any]] = []
+                for f in files:
+                    data = f.get("bytes")
+                    if not isinstance(data, (bytes, bytearray)):
+                        continue
+                    try:
+                        h = sha256(data).hexdigest()
+                    except Exception:
+                        h = f"len:{len(data)}"
+                    if h in seen_hashes:
+                        continue
+                    seen_hashes.add(h)
+                    dedup_files.append(f)
+                files = dedup_files
         except Exception:
             pass
 
