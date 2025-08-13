@@ -158,12 +158,15 @@ class OpenAIClient:
     async def generate_image(
         self, prompt: str, *, size: str = "1024x1024", seed: Optional[int] = None
     ) -> bytes:
-        resp = await self.client.images.generate(
-            model="gpt-image-1",
-            prompt=prompt,
-            size=size,
-            seed=seed,
-        )
+        # Only include 'seed' if provided to avoid SDK TypeError on unsupported versions
+        kwargs: Dict[str, Any] = {
+            "model": "gpt-image-1",
+            "prompt": prompt,
+            "size": size,
+        }
+        if seed is not None:
+            kwargs["seed"] = seed
+        resp = await self.client.images.generate(**kwargs)
         # SDK returns b64 JSON
         b64 = resp.data[0].b64_json
         return base64.b64decode(b64)
@@ -185,6 +188,7 @@ class OpenAIClient:
         kwargs: Dict[str, Any] = {"model": "gpt-image-1", "image": img, "prompt": prompt, "size": size}
         if mask is not None:
             kwargs["mask"] = BytesIO(mask)
+        # Only include 'seed' if provided to avoid SDK TypeError on unsupported versions
         if seed is not None:
             kwargs["seed"] = seed
         resp = await self.client.images.edits(**kwargs)
