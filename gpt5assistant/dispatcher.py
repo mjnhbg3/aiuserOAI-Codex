@@ -51,18 +51,24 @@ class Dispatcher:
         if allowed and message.channel.id not in allowed:
             return
 
-        # Skip if message starts with a command prefix (let Red command parser handle)
-        # Robustly get valid prefixes (sync or async depending on Red version)
-        prefixes = []
+        # Skip only real commands (across all cogs) using Red's parser
         try:
-            res = self.bot.get_valid_prefixes(guild)
-            if inspect.isawaitable(res):
-                res = await res
-            prefixes = list(res) if isinstance(res, (list, tuple)) else []
+            ctx = await self.bot.get_context(message)
+            is_cmd = bool(getattr(ctx, "valid", False)) or bool(getattr(ctx, "command", None))
+            if is_cmd:
+                return
         except Exception:
+            # On parser failure, fall back to old behavior: skip prefix-starting messages
             prefixes = []
-        if any(message.content.startswith(p) for p in prefixes if isinstance(p, str)):
-            return
+            try:
+                res = self.bot.get_valid_prefixes(guild)
+                if inspect.isawaitable(res):
+                    res = await res
+                prefixes = list(res) if isinstance(res, (list, tuple)) else []
+            except Exception:
+                prefixes = []
+            if any(isinstance(p, str) and p and (message.content or "").startswith(p) for p in prefixes):
+                return
 
         # Decide whether to reply: mention, replies, RNG, or reply_percent
         respond_on_mention = gconf.get("respond_on_mention", True)
