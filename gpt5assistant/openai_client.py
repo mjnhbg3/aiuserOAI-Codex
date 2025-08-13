@@ -861,8 +861,9 @@ class OpenAIClient:
                         # Only search containers referenced by this response to avoid cross-turn bleed
                         if not container_ids:
                             _dbg("containers list: no container_ids for this response; skipping scan")
-                            continue
-                        search_containers: list[str] = list(container_ids)
+                            search_containers = []
+                        else:
+                            search_containers = list(container_ids)
                         _dbg(f"containers list: searched={len(search_containers)}")
                         for cid in search_containers:
                             try:
