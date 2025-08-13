@@ -133,6 +133,11 @@ class OpenAIClient:
         enable_fs = bool(options.tools.get("file_search") and options.vector_store_id)
 
         # For reliability with tool calls, use non-streaming create and yield the final text.
+        extra_kwargs: Dict[str, Any] = {}
+        if options.inline_image_ids:
+            # Hint the model that we expect vision + text
+            extra_kwargs["modalities"] = ["text", "vision"]
+
         resp = await self.client.responses.create(
             model=options.model,
             input=self._to_input(
@@ -147,6 +152,7 @@ class OpenAIClient:
             max_output_tokens=options.max_tokens,
             tool_choice="auto",
             instructions=options.system_prompt,
+            **extra_kwargs,
         )
         # Extract output text robustly across SDK variants
         text = None
@@ -270,6 +276,7 @@ class OpenAIClient:
                         cdict = c if isinstance(c, dict) else getattr(c, "__dict__", {})
                         ctype = cdict.get("type")
                         if ctype in ("output_image", "image"):
+                            # Common schema: { type: "output_image", image: { b64_json } }
                             imgobj = cdict.get("image") or {}
                             b64 = imgobj.get("b64_json") or cdict.get("b64_json")
                             if b64:
@@ -277,6 +284,16 @@ class OpenAIClient:
                                     images.append(base64.b64decode(b64))
                                 except Exception:
                                     pass
+                        elif ctype in ("tool_output", "tool_result"):
+                            # Some SDKs wrap tool outputs
+                            data = cdict.get("content") or cdict.get("output")
+                            if isinstance(data, dict):
+                                b64 = data.get("b64_json")
+                                if b64:
+                                    try:
+                                        images.append(base64.b64decode(b64))
+                                    except Exception:
+                                        pass
         except Exception:
             pass
 

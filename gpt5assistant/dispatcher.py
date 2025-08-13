@@ -277,33 +277,9 @@ class Dispatcher:
                 for idx, img in enumerate(images):
                     file = discord.File(BytesIO(img), filename=f"image_{idx+1}.png")
                     await message.channel.send(file=file)
-                # Fallbacks
+                # Minimal fallback: if absolutely nothing, inform user without extra requests
                 if not text.strip() and not images:
-                    # Retry simplified, with tools
-                    simple_msgs = build_messages("You are a helpful assistant.", [], content)
-                    async with message.channel.typing():
-                        result2 = await self.client.respond_collect(simple_msgs, options)
-                    text2 = (result2.get("text") or "").strip()
-                    images2 = result2.get("images") or []
-                    if text2:
-                        for ch in chunk_message(text2):
-                            await message.channel.send(ch)
-                    for idx, img in enumerate(images2):
-                        file = discord.File(BytesIO(img), filename=f"image_{idx+1}.png")
-                        await message.channel.send(file=file)
-                    if not text2 and not images2:
-                        # Disable tools and try once
-                        tooly = dict(options.tools)
-                        options.tools = {k: False for k in tooly}
-                        async with message.channel.typing():
-                            result3 = await self.client.respond_collect(simple_msgs, options)
-                        options.tools = tooly
-                        text3 = (result3.get("text") or "").strip()
-                        if text3:
-                            for ch in chunk_message(text3):
-                                await message.channel.send(ch)
-                        else:
-                            await message.channel.send("Sorry, I couldn’t produce a reply. Try again or use [p]gpt5 ask …")
+                    await message.channel.send("I couldn’t produce a result for that. Try rephrasing or mention me directly.")
             except Exception as e:
                 await message.channel.send(f"Sorry, I hit an error: {e}")
 
