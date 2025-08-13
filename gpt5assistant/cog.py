@@ -610,8 +610,9 @@ class GPT5Assistant(commands.Cog):
                 payload.append({"type": "image_generation"})
             tools_payload_str = str(payload)
 
-            # Use the client path (non-stream create under the hood)
-            ok_tools = await _collect(client.respond_chat(messages, opts))
+            # Use the client path and collect final output including images
+            result = await client.respond_collect(messages, opts)
+            ok_tools = result.get("text", "") or (f"[images: {len(result.get('images') or [])}]" if result.get("images") else "")
         except Exception as e:
             status = getattr(e, "status_code", None) or getattr(e, "status", None)
             body = None

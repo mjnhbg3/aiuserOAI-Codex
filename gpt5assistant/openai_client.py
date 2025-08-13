@@ -7,6 +7,7 @@ from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional
 
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
+import time
 
 
 @dataclass
@@ -236,6 +237,20 @@ class OpenAIClient:
             tool_choice="auto",
             instructions=options.system_prompt,
         )
+
+        # If the response is still running tools, poll until completed or timeout
+        status = getattr(resp, "status", None)
+        if status not in {"completed", "failed", "cancelled"}:
+            deadline = time.monotonic() + 170.0
+            while time.monotonic() < deadline:
+                await asyncio.sleep(0.75)
+                try:
+                    resp = await self.client.responses.get(resp.id)
+                    status = getattr(resp, "status", None)
+                    if status in {"completed", "failed", "cancelled"}:
+                        break
+                except Exception:
+                    break
 
         # Text
         text = None
