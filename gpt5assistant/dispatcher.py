@@ -376,12 +376,15 @@ class Dispatcher:
                     "If the user asks to describe or edit an image, use the provided input_image parts "
                     "as your source rather than referencing prior response or image IDs."
                 )
-            # If code interpreter is enabled, politely discourage sandbox links in text
+            # If code interpreter is enabled, steer toward real file outputs (not just mentions)
             if effective_tools.get("code_interpreter"):
                 sys_prompt_aug = (
                     f"{sys_prompt_aug}\n\n"
                     "When using the code interpreter and creating files, do not include sandbox:/mnt/data download links in your message."
                     " Refer to files by name only; I will attach the actual files to the chat."
+                    " If the user asks for a file (e.g., csv, xml, xlsx, json, txt), you must actually create the file in the code interpreter,"
+                    " and include it in your final response as a file output so it can be attached."
+                    " Do not say you 'saved' a file without returning the file as an output; if you cannot attach a file, provide the content inline as a code block."
                 )
 
             options = ChatOptions(
