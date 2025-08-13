@@ -85,17 +85,22 @@ async def gather_history(
             # Skip command messages (prefer parser; fallback to prefix)
             raw = (msg.content or "")
             leading = raw.lstrip()
+            used_parser = False
+            parser_failed = False
             if is_command_message is not None:
+                used_parser = True
                 try:
                     if await is_command_message(msg):
                         continue
                 except Exception:
+                    parser_failed = True
+            # Fallback to prefix-based skip only if parser not used or failed
+            if (not used_parser) or parser_failed:
+                try:
+                    if any(isinstance(p, str) and p and leading.startswith(p) for p in skip_prefixes):
+                        continue
+                except Exception:
                     pass
-            try:
-                if any(isinstance(p, str) and p and leading.startswith(p) for p in skip_prefixes):
-                    continue
-            except Exception:
-                pass
             text = raw.strip()
             if not text:
                 continue
