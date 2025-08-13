@@ -44,7 +44,11 @@ class OpenAIClient:
         try:
             import httpx
             url = f"{self._base_url}/containers/{container_id}/files/{file_id}/content"
-            headers = {"Authorization": f"Bearer {self._api_key}"}
+            headers = {
+                "Authorization": f"Bearer {self._api_key}",
+                # Some endpoints require this beta header for container access
+                "OpenAI-Beta": "assistants=v2",
+            }
             async with httpx.AsyncClient(timeout=60) as http:
                 r = await http.get(url, headers=headers)
                 if r.status_code == 200:
@@ -375,7 +379,9 @@ class OpenAIClient:
                             if isinstance(anns, list):
                                 for ann in anns:
                                     ad = ann if isinstance(ann, dict) else getattr(ann, "__dict__", {})
-                                    if str(ad.get("type", "")).lower() == "container_file_citation":
+                                    atype = str(ad.get("type", "")).lower().replace('.', '_').replace('-', '_')
+                                    # Accept any annotation type that looks like a container file citation
+                                    if ("container" in atype and "file" in atype and "citation" in atype):
                                         fid = ad.get("file_id")
                                         cid = ad.get("container_id")
                                         fname = (ad.get("filename") or ad.get("name") or "").strip()
