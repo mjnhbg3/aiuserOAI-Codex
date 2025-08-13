@@ -300,6 +300,7 @@ class OpenAIClient:
         images: list[bytes] = []
         image_urls: list[str] = []
         file_ids_to_fetch: list[str] = []
+        all_file_ids: set[str] = set()
         filename_to_fileid: dict[str, str] = {}
         mentioned_filenames: list[str] = []
         # Extract any image-like filenames from the visible text for correlation (e.g., parabola.png)
@@ -333,6 +334,7 @@ class OpenAIClient:
                         fid = m.get("file_id") or m.get("id") or getattr(msg, "id", None)
                         if isinstance(fid, str):
                             file_ids_to_fetch.append(fid)
+                            all_file_ids.add(fid)
                         # Continue on to also scan nested structures on this message, if any
                     # Message content list
                     content = getattr(msg, "content", None)
@@ -356,6 +358,7 @@ class OpenAIClient:
                                 fid = imgobj.get("file_id") or imgobj.get("id") or cdict.get("id")
                                 if isinstance(fid, str):
                                     file_ids_to_fetch.append(fid)
+                                    all_file_ids.add(fid)
                                 # Filename mapping if present
                                 fname = (imgobj.get("filename") or cdict.get("filename") or cdict.get("name") or "").strip().lower()
                                 if fname and isinstance(fid, str) and fname not in filename_to_fileid:
@@ -374,6 +377,7 @@ class OpenAIClient:
                                     fid = data.get("file_id") or data.get("id")
                                     if isinstance(fid, str):
                                         file_ids_to_fetch.append(fid)
+                                        all_file_ids.add(fid)
                                     fname = (data.get("filename") or data.get("name") or "").strip().lower()
                                     if fname and isinstance(fid, str) and fname not in filename_to_fileid:
                                         filename_to_fileid[fname] = fid
@@ -390,6 +394,7 @@ class OpenAIClient:
                                                 fid2 = it.get("file_id") or it.get("id")
                                                 if isinstance(fid2, str):
                                                     file_ids_to_fetch.append(fid2)
+                                                    all_file_ids.add(fid2)
                                                 fname2 = (it.get("filename") or it.get("name") or "").strip().lower()
                                                 if fname2 and isinstance(fid2, str) and fname2 not in filename_to_fileid:
                                                     filename_to_fileid[fname2] = fid2
@@ -405,6 +410,7 @@ class OpenAIClient:
                                             fid = it.get("file_id") or it.get("id")
                                             if isinstance(fid, str):
                                                 file_ids_to_fetch.append(fid)
+                                                all_file_ids.add(fid)
                                             fname = (it.get("filename") or it.get("name") or "").strip().lower()
                                             if fname and isinstance(fid, str) and fname not in filename_to_fileid:
                                                 filename_to_fileid[fname] = fid
@@ -423,6 +429,9 @@ class OpenAIClient:
                                     file_ids_to_fetch.append(fid)
                                     if fname and fname not in filename_to_fileid:
                                         filename_to_fileid[fname] = fid
+                                # Track all file_ids for potential sniffing later
+                                if isinstance(fid, str):
+                                    all_file_ids.add(fid)
             # Final safety pass: recursively scan the entire output for any stray image/file refs
             def _scan(obj: Any) -> None:
                 if isinstance(obj, dict):
@@ -460,6 +469,8 @@ class OpenAIClient:
                                         filename_to_fileid[low] = fid
                             except Exception:
                                 pass
+                        # Track all file ids regardless for sniffing if needed
+                        all_file_ids.add(fid)
                     for v in obj.values():
                         _scan(v)
                 elif isinstance(obj, list):
@@ -534,13 +545,41 @@ class OpenAIClient:
         for fid in file_ids_to_fetch:
             if fid not in prioritized_ids:
                 prioritized_ids.append(fid)
+        # Finally, add any other file ids (we'll sniff content type after download)
+        for fid in all_file_ids:
+            if fid not in prioritized_ids:
+                prioritized_ids.append(fid)
+
+        def _looks_like_image(buf: bytes) -> bool:
+            try:
+                if len(buf) < 12:
+                    return False
+                b = buf[:12]
+                # PNG
+                if b.startswith(b"\x89PNG\r\n\x1a\n"):
+                    return True
+                # JPEG
+                if b.startswith(b"\xff\xd8\xff"):
+                    return True
+                # GIF
+                if b.startswith(b"GIF87a") or b.startswith(b"GIF89a"):
+                    return True
+                # WEBP (RIFF....WEBP)
+                if b[:4] == b"RIFF" and buf[8:12] == b"WEBP":
+                    return True
+                # BMP
+                if b[:2] == b"BM":
+                    return True
+            except Exception:
+                return False
+            return False
 
         for fid in prioritized_ids:
             try:
                 file_resp = await self.client.files.content(fid)
                 # file_resp is an httpx.Response-like object with bytes in .read()
                 chunk = await file_resp.aread() if hasattr(file_resp, "aread") else file_resp.read()
-                if chunk:
+                if chunk and _looks_like_image(chunk):
                     images.append(chunk)
             except Exception:
                 continue
