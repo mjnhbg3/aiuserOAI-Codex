@@ -1044,6 +1044,45 @@ class OpenAIClient:
         except Exception:
             pass
 
+        # Cross-type de-dup: if an image also appears in files (e.g., same PNG returned both
+        # as output_image and as a file), drop the duplicate file to avoid double attachments.
+        try:
+            if images and files:
+                img_hashes: set[str] = set()
+                for img in images:
+                    try:
+                        img_hashes.add(sha256(img).hexdigest())
+                    except Exception:
+                        img_hashes.add(f"len:{len(img)}")
+                filtered: list[Dict[str, Any]] = []
+                for f in files:
+                    data = f.get("bytes")
+                    name = f.get("name")
+                    if not isinstance(data, (bytes, bytearray)):
+                        continue
+                    # Only consider common image extensions for cross-type dedup
+                    is_img_ext = False
+                    try:
+                        if isinstance(name, str):
+                            low = name.lower()
+                            if any(low.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff")):
+                                is_img_ext = True
+                    except Exception:
+                        pass
+                    try:
+                        fh = sha256(data).hexdigest()
+                    except Exception:
+                        fh = f"len:{len(data)}"
+                    if is_img_ext and fh in img_hashes:
+                        # skip duplicate image file
+                        continue
+                    filtered.append(f)
+                if len(filtered) != len(files):
+                    _dbg(f"cross-dedup: removed {len(files)-len(filtered)} image file duplicates")
+                files = filtered
+        except Exception:
+            pass
+
         result: Dict[str, Any] = {"text": text or "", "images": images, "image_names": image_names, "files": files}
         if debug:
             result["debug"] = dbg
