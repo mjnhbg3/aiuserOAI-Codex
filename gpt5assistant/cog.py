@@ -561,7 +561,9 @@ class GPT5Assistant(commands.Cog):
             if eff_tools.get("file_search") and kb:
                 payload.append({"type": "file_search", "vector_store_ids": [kb]})
             if eff_tools.get("code_interpreter"):
-                payload.append({"type": "code_interpreter"})
+                payload.append({"type": "code_interpreter", "container": {}})
+            if eff_tools.get("image"):
+                payload.append({"type": "image_generation"})
             tools_payload_str = str(payload)
 
             # Use the client path (non-stream create under the hood)

@@ -53,7 +53,7 @@ class OpenAIClient:
         if tools.get("file_search") and vector_store_id:
             arr.append({"type": "file_search", "vector_store_ids": [vector_store_id]})
         if tools.get("code_interpreter"):
-            arr.append({"type": "code_interpreter"})
+            arr.append({"type": "code_interpreter", "container": {}})
         if tools.get("image"):
             # Allow the model to call image generation natively via Responses tools
             arr.append({"type": "image_generation"})
