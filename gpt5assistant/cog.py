@@ -649,15 +649,23 @@ class GPT5Assistant(commands.Cog):
             result = await client.respond_collect(messages, opts)
             ok_tools = result.get("text", "") or (f"[images: {len(result.get('images') or [])}]" if result.get("images") else "")
         except Exception as e:
-            status = getattr(e, "status_code", None) or getattr(e, "status", None)
+            # Unwrap RetryError to original HTTP error where possible
+            orig = e
+            last_attempt = getattr(e, "last_attempt", None)
+            if last_attempt and hasattr(last_attempt, "exception"):
+                try:
+                    orig = last_attempt.exception()
+                except Exception:
+                    orig = e
+            status = getattr(orig, "status_code", None) or getattr(orig, "status", None)
             body = None
-            resp = getattr(e, "response", None)
+            resp = getattr(orig, "response", None)
             try:
                 if resp and hasattr(resp, "json"):
                     body = resp.json()
             except Exception:
                 body = None
-            err_tools = f"{type(e).__name__}: {e} (status={status})\n{str(body)[:700] if body else ''}"
+            err_tools = f"{type(orig).__name__}: {orig} (status={status})\n{str(body)[:700] if body else ''}"
 
         embed = discord.Embed(title="gpt5 diag", color=await ctx.embed_color())
         embed.add_field(name="SDK", value=f"openai {sdk_ver}", inline=True)

@@ -306,9 +306,16 @@ class Dispatcher:
                     await message.channel.send("I couldn’t produce a result for that. If you asked for an image, ensure the image tool is enabled: [p]gpt5 config tools enable image.")
             except Exception as e:
                 # Try to extract body/status for clearer diagnostics
-                status = getattr(e, "status_code", None) or getattr(e, "status", None)
+                orig = e
+                last_attempt = getattr(e, "last_attempt", None)
+                if last_attempt and hasattr(last_attempt, "exception"):
+                    try:
+                        orig = last_attempt.exception()
+                    except Exception:
+                        orig = e
+                status = getattr(orig, "status_code", None) or getattr(orig, "status", None)
                 body = None
-                resp = getattr(e, "response", None)
+                resp = getattr(orig, "response", None)
                 try:
                     if resp and hasattr(resp, "json"):
                         body = resp.json()
@@ -318,9 +325,9 @@ class Dispatcher:
                     preview = str(body)
                     if len(preview) > 700:
                         preview = preview[:700] + "…"
-                    await message.channel.send(f"Sorry, I hit an error: {type(e).__name__} (status={status})\n{preview}")
+                    await message.channel.send(f"Sorry, I hit an error: {type(orig).__name__} (status={status})\n{preview}")
                 else:
-                    await message.channel.send(f"Sorry, I hit an error: {e}")
+                    await message.channel.send(f"Sorry, I hit an error: {orig}")
 
     async def _image_path(self, message: discord.Message, content: str, gconf: Dict[str, Any]) -> None:
         lock = self._get_lock(message.channel.id)
