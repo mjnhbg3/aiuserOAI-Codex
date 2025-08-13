@@ -590,6 +590,25 @@ class OpenAIClient:
                                 pass
                         # Track all file ids regardless for sniffing if needed
                         all_file_ids.add(fid)
+                    # Consider filename-like strings as hints
+                    try:
+                        for key in ("filename", "name", "path"):
+                            v = obj.get(key)
+                            if isinstance(v, str):
+                                base = v
+                                # For paths, take basename
+                                if key == "path":
+                                    try:
+                                        import os
+                                        base = os.path.basename(v)
+                                    except Exception:
+                                        base = v
+                                low = base.strip().lower()
+                                if any(low.endswith(ext) for ext in (".png",".jpg",".jpeg",".gif",".bmp",".webp",".tif",".tiff",".csv",".pdf",".zip",".xlsx",".xls",".json",".txt",".md",".html",".docx",".pptx",".xml",".tar")):
+                                    if low not in mentioned_filenames:
+                                        mentioned_filenames.append(low)
+                    except Exception:
+                        pass
                     for v in obj.values():
                         _scan(v)
                 elif isinstance(obj, list):
@@ -598,6 +617,11 @@ class OpenAIClient:
             try:
                 if out is not None:
                     _scan(out)
+            except Exception:
+                pass
+            # Also scan the entire response object for any container/file hints
+            try:
+                _scan(getattr(resp, "__dict__", {}))
             except Exception:
                 pass
         except Exception:
