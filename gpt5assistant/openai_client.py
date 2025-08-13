@@ -295,60 +295,39 @@ class OpenAIClient:
             out = getattr(resp, "output", None)
             if isinstance(out, list):
                 for msg in out:
-                    # Each msg can be a structured item or a message
-                    m = msg if isinstance(msg, dict) else getattr(msg, "__dict__", {})
-                    mtype = m.get("type") or getattr(msg, "type", None)
-                    # Direct image generation call
-                    if mtype == "image_generation_call":
-                        # result is base64 string; revised_prompt may exist
-                        res = m.get("result") or getattr(msg, "result", None)
-                        if isinstance(res, str) and res.strip():
-                            try:
-                                images.append(base64.b64decode(res))
-                            except Exception:
-                                pass
-                        # Some SDKs may return url or file ids at this level
-                        url = m.get("url") or getattr(msg, "url", None)
-                        if isinstance(url, str):
-                            image_urls.append(url)
-                        fid = m.get("id") or m.get("file_id") or getattr(msg, "id", None)
-                        if isinstance(fid, str):
-                            file_ids_to_fetch.append(fid)
-                        continue
-
-                    # Message content: scan inner content array
                     content = getattr(msg, "content", None)
                     if content is None and isinstance(msg, dict):
                         content = msg.get("content")
-                    if isinstance(content, list):
-                        for c in content:
-                            cdict = c if isinstance(c, dict) else getattr(c, "__dict__", {})
-                            ctype = cdict.get("type")
-                            if ctype in ("output_image", "image"):
-                                # Common schema: { type: "output_image", image: { b64_json } }
-                                imgobj = cdict.get("image") or {}
-                                b64 = imgobj.get("b64_json") or cdict.get("b64_json")
+                    if not isinstance(content, list):
+                        continue
+                    for c in content:
+                        cdict = c if isinstance(c, dict) else getattr(c, "__dict__", {})
+                        ctype = cdict.get("type")
+                        if ctype in ("output_image", "image"):
+                            # Common schema: { type: "output_image", image: { b64_json } }
+                            imgobj = cdict.get("image") or {}
+                            b64 = imgobj.get("b64_json") or cdict.get("b64_json")
+                            if b64:
+                                try:
+                                    images.append(base64.b64decode(b64))
+                                except Exception:
+                                    pass
+                            url = imgobj.get("url") or cdict.get("url")
+                            if isinstance(url, str):
+                                image_urls.append(url)
+                            fid = imgobj.get("id") or imgobj.get("file_id") or cdict.get("id")
+                            if isinstance(fid, str):
+                                file_ids_to_fetch.append(fid)
+                        elif ctype in ("tool_output", "tool_result"):
+                            # Some SDKs wrap tool outputs
+                            data = cdict.get("content") or cdict.get("output")
+                            if isinstance(data, dict):
+                                b64 = data.get("b64_json")
                                 if b64:
                                     try:
                                         images.append(base64.b64decode(b64))
                                     except Exception:
                                         pass
-                                url = imgobj.get("url") or cdict.get("url")
-                                if isinstance(url, str):
-                                    image_urls.append(url)
-                                fid = imgobj.get("id") or imgobj.get("file_id") or cdict.get("id")
-                                if isinstance(fid, str):
-                                    file_ids_to_fetch.append(fid)
-                            elif ctype in ("tool_output", "tool_result"):
-                                # Some SDKs wrap tool outputs
-                                data = cdict.get("content") or cdict.get("output")
-                                if isinstance(data, dict):
-                                    b64 = data.get("b64_json")
-                                    if b64:
-                                        try:
-                                            images.append(base64.b64decode(b64))
-                                        except Exception:
-                                            pass
         except Exception:
             pass
 
