@@ -300,6 +300,19 @@ class OpenAIClient:
         images: list[bytes] = []
         image_urls: list[str] = []
         file_ids_to_fetch: list[str] = []
+        filename_to_fileid: dict[str, str] = {}
+        mentioned_filenames: list[str] = []
+        # Extract any image-like filenames from the visible text for correlation (e.g., parabola.png)
+        try:
+            import re
+            if text:
+                for m in re.findall(r"([A-Za-z0-9_\- .]+\.(?:png|jpg|jpeg|gif|bmp|webp|tif|tiff))", text, flags=re.IGNORECASE):
+                    # Normalize spacing and case
+                    fname = m.strip().lower()
+                    if fname not in mentioned_filenames:
+                        mentioned_filenames.append(fname)
+        except Exception:
+            pass
         try:
             out = getattr(resp, "output", None)
             if isinstance(out, list):
@@ -317,7 +330,7 @@ class OpenAIClient:
                         url = m.get("url") or getattr(msg, "url", None)
                         if isinstance(url, str):
                             image_urls.append(url)
-                        fid = m.get("id") or m.get("file_id") or getattr(msg, "id", None)
+                        fid = m.get("file_id") or m.get("id") or getattr(msg, "id", None)
                         if isinstance(fid, str):
                             file_ids_to_fetch.append(fid)
                         # Continue on to also scan nested structures on this message, if any
@@ -340,9 +353,13 @@ class OpenAIClient:
                                 url = imgobj.get("url") or cdict.get("url")
                                 if isinstance(url, str):
                                     image_urls.append(url)
-                                fid = imgobj.get("id") or imgobj.get("file_id") or cdict.get("id")
+                                fid = imgobj.get("file_id") or imgobj.get("id") or cdict.get("id")
                                 if isinstance(fid, str):
                                     file_ids_to_fetch.append(fid)
+                                # Filename mapping if present
+                                fname = (imgobj.get("filename") or cdict.get("filename") or cdict.get("name") or "").strip().lower()
+                                if fname and isinstance(fid, str) and fname not in filename_to_fileid:
+                                    filename_to_fileid[fname] = fid
                             elif ctype in ("tool_output", "tool_result"):
                                 data = cdict.get("content") or cdict.get("output")
                                 # Data might be dict, list, or string
@@ -357,6 +374,9 @@ class OpenAIClient:
                                     fid = data.get("file_id") or data.get("id")
                                     if isinstance(fid, str):
                                         file_ids_to_fetch.append(fid)
+                                    fname = (data.get("filename") or data.get("name") or "").strip().lower()
+                                    if fname and isinstance(fid, str) and fname not in filename_to_fileid:
+                                        filename_to_fileid[fname] = fid
                                     # Some SDKs place images under 'images'
                                     imgs = data.get("images")
                                     if isinstance(imgs, list):
@@ -370,6 +390,9 @@ class OpenAIClient:
                                                 fid2 = it.get("file_id") or it.get("id")
                                                 if isinstance(fid2, str):
                                                     file_ids_to_fetch.append(fid2)
+                                                fname2 = (it.get("filename") or it.get("name") or "").strip().lower()
+                                                if fname2 and isinstance(fid2, str) and fname2 not in filename_to_fileid:
+                                                    filename_to_fileid[fname2] = fid2
                                 elif isinstance(data, list):
                                     for it in data:
                                         if isinstance(it, dict):
@@ -382,6 +405,9 @@ class OpenAIClient:
                                             fid = it.get("file_id") or it.get("id")
                                             if isinstance(fid, str):
                                                 file_ids_to_fetch.append(fid)
+                                            fname = (it.get("filename") or it.get("name") or "").strip().lower()
+                                            if fname and isinstance(fid, str) and fname not in filename_to_fileid:
+                                                filename_to_fileid[fname] = fid
             # Final safety pass: recursively scan the entire output for any stray image/file refs
             def _scan(obj: Any) -> None:
                 if isinstance(obj, dict):
@@ -412,6 +438,13 @@ class OpenAIClient:
                             is_img = True
                         if is_img:
                             file_ids_to_fetch.append(fid)
+                            try:
+                                if isinstance(fname, str) and fname:
+                                    low = fname.strip().lower()
+                                    if low not in filename_to_fileid:
+                                        filename_to_fileid[low] = fid
+                            except Exception:
+                                pass
                     for v in obj.values():
                         _scan(v)
                 elif isinstance(obj, list):
@@ -446,13 +479,17 @@ class OpenAIClient:
             files_api = getattr(self.client, "responses", None)
             if files_api is not None and hasattr(files_api, "files") and hasattr(files_api.files, "list"):
                 try:
-                    flist = await files_api.files.list(resp.id)
+                    # Try keyword first, then positional for older SDKs
+                    try:
+                        flist = await files_api.files.list(response_id=resp.id)
+                    except Exception:
+                        flist = await files_api.files.list(resp.id)
                     items = getattr(flist, "data", None) or getattr(flist, "__dict__", {}).get("data")
                     if isinstance(items, list):
                         for it in items:
                             obj = it if isinstance(it, dict) else getattr(it, "__dict__", {})
                             fid = obj.get("id") or obj.get("file_id")
-                            fname = obj.get("filename") or obj.get("name")
+                            fname = obj.get("filename") or obj.get("display_name") or obj.get("name")
                             mime = obj.get("mime_type") or obj.get("mime")
                             is_image = False
                             if isinstance(mime, str) and mime.startswith("image/"):
@@ -463,13 +500,27 @@ class OpenAIClient:
                                     is_image = True
                             if is_image and isinstance(fid, str):
                                 file_ids_to_fetch.append(fid)
+                                low = (fname or "").strip().lower()
+                                if low and low not in filename_to_fileid:
+                                    filename_to_fileid[low] = fid
                 except Exception:
                     pass
         except Exception:
             pass
 
         # Fetch any file ids via OpenAI files.content
+        # If the text mentioned specific filenames, prioritize fetching those by mapped ids
+        prioritized_ids: list[str] = []
+        for fname in mentioned_filenames:
+            fid = filename_to_fileid.get(fname)
+            if isinstance(fid, str) and fid not in prioritized_ids:
+                prioritized_ids.append(fid)
+        # Add remaining discovered ids
         for fid in file_ids_to_fetch:
+            if fid not in prioritized_ids:
+                prioritized_ids.append(fid)
+
+        for fid in prioritized_ids:
             try:
                 file_resp = await self.client.files.content(fid)
                 # file_resp is an httpx.Response-like object with bytes in .read()

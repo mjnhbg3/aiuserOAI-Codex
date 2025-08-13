@@ -101,6 +101,11 @@ async def gather_history(
                         continue
                 except Exception:
                     pass
+            # Skip bot's own forget-confirmation message so it doesn't pollute context
+            if role == "assistant":
+                lowered = (msg.content or "").lower()
+                if ("forget previous context" in lowered) and ("starting now" in lowered):
+                    continue
             text = raw.strip()
             if not text:
                 continue
