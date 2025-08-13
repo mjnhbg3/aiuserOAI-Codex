@@ -311,12 +311,12 @@ class OpenAIClient:
         if text is None:
             text = ""
         if not text:
-        try:
-            parts: list[str] = []
-            out = getattr(resp, "output", None)
-            if isinstance(out, list):
-                for msg in out:
-                    content = getattr(msg, "content", None)
+            try:
+                parts: list[str] = []
+                out = getattr(resp, "output", None)
+                if isinstance(out, list):
+                    for msg in out:
+                        content = getattr(msg, "content", None)
                         if content is None and isinstance(msg, dict):
                             content = msg.get("content")
                         if not isinstance(content, list):
