@@ -32,6 +32,16 @@ class Dispatcher:
             self._locks[channel_id] = asyncio.Lock()
         return self._locks[channel_id]
 
+    async def _is_command_message(self, msg: discord.Message) -> bool:
+        try:
+            ctx = await self.bot.get_context(msg)
+            # Support both d.py styles
+            if hasattr(ctx, "valid"):
+                return bool(getattr(ctx, "valid"))
+            return bool(getattr(ctx, "command", None))
+        except Exception:
+            return False
+
     async def handle_message(self, message: discord.Message) -> None:
         if message.author.bot or not message.guild:
             return
@@ -154,6 +164,7 @@ class Dispatcher:
                 optin_by_default=bool(gconf.get("optin_by_default", True)),
                 earliest_timestamp=earliest_ts,
                 skip_prefixes=prefixes,
+                is_command_message=self._is_command_message,
             )
             msgs = build_messages(system_prompt, history, content)
             # Collect a limited number of image attachments from recent history
@@ -177,10 +188,14 @@ class Dispatcher:
                                 break
                         except Exception:
                             pass
-                        # Skip command messages
-                        rawc = (msg.content or "")
-                        if any(isinstance(p, str) and p and rawc.lstrip().startswith(p) for p in prefixes):
-                            continue
+                        # Skip command messages (use parser if possible)
+                        try:
+                            if await self._is_command_message(msg):
+                                continue
+                        except Exception:
+                            rawc = (msg.content or "")
+                            if any(isinstance(p, str) and p and rawc.lstrip().startswith(p) for p in prefixes):
+                                continue
                         # Enforce forget cutoff
                         try:
                             if earliest_dt is not None and msg.created_at < earliest_dt:

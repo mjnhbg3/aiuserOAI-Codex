@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Iterable
+from typing import Any, Dict, List, Optional, Iterable, Callable, Awaitable
 
 import asyncio
 
@@ -33,6 +33,7 @@ async def gather_history(
     optin_by_default: bool = True,
     earliest_timestamp=None,
     skip_prefixes: Iterable[str] = (),
+    is_command_message: Optional[Callable[[Any], Awaitable[bool]]] = None,
 ) -> List[Dict[str, str]]:
     """Collect recent channel context into chat history list.
 
@@ -81,9 +82,15 @@ async def gather_history(
                     continue
                 if (uid not in optin_set) and not optin_by_default:
                     continue
-            # Skip command messages by prefix
+            # Skip command messages (prefer parser; fallback to prefix)
             raw = (msg.content or "")
             leading = raw.lstrip()
+            if is_command_message is not None:
+                try:
+                    if await is_command_message(msg):
+                        continue
+                except Exception:
+                    pass
             try:
                 if any(isinstance(p, str) and p and leading.startswith(p) for p in skip_prefixes):
                     continue
