@@ -31,6 +31,27 @@ class ChatOptions:
 class OpenAIClient:
     def __init__(self, api_key: Optional[str] = None, *, timeout: float = 180.0) -> None:
         self.client = AsyncOpenAI(api_key=api_key, timeout=timeout)
+        self._api_key = api_key
+        self._base_url = "https://api.openai.com/v1"
+
+    async def _fetch_container_file(self, container_id: str, file_id: str) -> Optional[bytes]:
+        """Download bytes for a container file via the containers API.
+
+        Uses direct HTTP call to ensure compatibility even if the SDK surface differs.
+        """
+        if not self._api_key:
+            return None
+        try:
+            import httpx
+            url = f"{self._base_url}/containers/{container_id}/files/{file_id}/content"
+            headers = {"Authorization": f"Bearer {self._api_key}"}
+            async with httpx.AsyncClient(timeout=60) as http:
+                r = await http.get(url, headers=headers)
+                if r.status_code == 200:
+                    return r.content
+        except Exception:
+            return None
+        return None
 
     async def _iter_text_from_stream(self, stream) -> AsyncGenerator[str, None]:
         async for event in stream:
@@ -303,6 +324,7 @@ class OpenAIClient:
         all_file_ids: set[str] = set()
         filename_to_fileid: dict[str, str] = {}
         mentioned_filenames: list[str] = []
+        container_citations: list[Dict[str, str]] = []  # {container_id, file_id, filename}
         # Extract any image-like filenames from the visible text for correlation (e.g., parabola.png)
         try:
             import re
@@ -344,6 +366,21 @@ class OpenAIClient:
                         for c in content:
                             cdict = c if isinstance(c, dict) else getattr(c, "__dict__", {})
                             ctype = cdict.get("type")
+                            # Capture container file citations from annotations on any content item
+                            anns = cdict.get("annotations") or getattr(c, "annotations", None)
+                            if isinstance(anns, list):
+                                for ann in anns:
+                                    ad = ann if isinstance(ann, dict) else getattr(ann, "__dict__", {})
+                                    if str(ad.get("type", "")).lower() == "container_file_citation":
+                                        fid = ad.get("file_id")
+                                        cid = ad.get("container_id")
+                                        fname = (ad.get("filename") or ad.get("name") or "").strip()
+                                        if isinstance(fid, str) and isinstance(cid, str):
+                                            container_citations.append({
+                                                "container_id": cid,
+                                                "file_id": fid,
+                                                "filename": fname,
+                                            })
                             if ctype in ("output_image", "image"):
                                 imgobj = cdict.get("image") or {}
                                 b64 = imgobj.get("b64_json") or cdict.get("b64_json")
@@ -533,6 +570,19 @@ class OpenAIClient:
                     pass
         except Exception:
             pass
+
+        # Fetch any container-cited files first (highest confidence)
+        for cit in container_citations:
+            try:
+                chunk = await self._fetch_container_file(cit.get("container_id", ""), cit.get("file_id", ""))
+                if chunk:
+                    images.append(chunk)
+                    # Also map by filename if present
+                    fname = (cit.get("filename") or "").strip().lower()
+                    if fname and isinstance(cit.get("file_id"), str):
+                        filename_to_fileid[fname] = cit["file_id"]
+            except Exception:
+                continue
 
         # Fetch any file ids via OpenAI files.content
         # If the text mentioned specific filenames, prioritize fetching those by mapped ids
