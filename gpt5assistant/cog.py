@@ -22,7 +22,7 @@ class GPT5Assistant(commands.Cog):
             system_prompt="You are GPT-5, a helpful assistant. Keep replies concise.",
             diag_plain="Diagnostic ping: reply with the single word PONG.",
             diag_tools="What is one major headline today? Provide a short sentence.",
-            code_container_type="",
+            code_container_type="auto",
         )
         # Per-channel cutoff for forget
         self.config.register_channel(forget_after_ts=0)
@@ -603,7 +603,9 @@ class GPT5Assistant(commands.Cog):
             if eff_tools.get("file_search") and kb:
                 payload.append({"type": "file_search", "vector_store_ids": [kb]})
             if eff_tools.get("code_interpreter"):
-                payload.append({"type": "code_interpreter", "container": {}})
+                ctype = await self.config.code_container_type()
+                ctype = (ctype or "auto").strip()
+                payload.append({"type": "code_interpreter", "container": {"type": ctype}})
             if eff_tools.get("image"):
                 payload.append({"type": "image_generation"})
             tools_payload_str = str(payload)
