@@ -323,8 +323,10 @@ class OpenAIClient:
         file_ids_to_fetch: list[str] = []
         all_file_ids: set[str] = set()
         filename_to_fileid: dict[str, str] = {}
+        id_to_filename: dict[str, str] = {}
         mentioned_filenames: list[str] = []
         container_citations: list[Dict[str, str]] = []  # {container_id, file_id, filename}
+        files: list[Dict[str, Any]] = []  # {name, bytes}
         # Extract any image-like filenames from the visible text for correlation (e.g., parabola.png)
         try:
             import re
@@ -400,6 +402,7 @@ class OpenAIClient:
                                 fname = (imgobj.get("filename") or cdict.get("filename") or cdict.get("name") or "").strip().lower()
                                 if fname and isinstance(fid, str) and fname not in filename_to_fileid:
                                     filename_to_fileid[fname] = fid
+                                    id_to_filename[fid] = fname
                             elif ctype in ("tool_output", "tool_result"):
                                 data = cdict.get("content") or cdict.get("output")
                                 # Data might be dict, list, or string
@@ -418,6 +421,7 @@ class OpenAIClient:
                                     fname = (data.get("filename") or data.get("name") or "").strip().lower()
                                     if fname and isinstance(fid, str) and fname not in filename_to_fileid:
                                         filename_to_fileid[fname] = fid
+                                        id_to_filename[fid] = fname
                                     # Some SDKs place images under 'images'
                                     imgs = data.get("images")
                                     if isinstance(imgs, list):
@@ -435,6 +439,7 @@ class OpenAIClient:
                                                 fname2 = (it.get("filename") or it.get("name") or "").strip().lower()
                                                 if fname2 and isinstance(fid2, str) and fname2 not in filename_to_fileid:
                                                     filename_to_fileid[fname2] = fid2
+                                                    id_to_filename[fid2] = fname2
                                 elif isinstance(data, list):
                                     for it in data:
                                         if isinstance(it, dict):
@@ -451,6 +456,7 @@ class OpenAIClient:
                                             fname = (it.get("filename") or it.get("name") or "").strip().lower()
                                             if fname and isinstance(fid, str) and fname not in filename_to_fileid:
                                                 filename_to_fileid[fname] = fid
+                                                id_to_filename[fid] = fname
                             elif ctype in ("output_file", "file"):
                                 fid = cdict.get("file_id") or cdict.get("id")
                                 fname = (cdict.get("filename") or cdict.get("name") or "").strip().lower()
@@ -566,6 +572,13 @@ class OpenAIClient:
                                 low = (fname or "").strip().lower()
                                 if low and low not in filename_to_fileid:
                                     filename_to_fileid[low] = fid
+                                    id_to_filename[fid] = low
+                            elif isinstance(fid, str):
+                                # non-image assets
+                                all_file_ids.add(fid)
+                                low = (fname or "").strip().lower()
+                                if low:
+                                    id_to_filename[fid] = low
                 except Exception:
                     pass
         except Exception:
@@ -576,11 +589,35 @@ class OpenAIClient:
             try:
                 chunk = await self._fetch_container_file(cit.get("container_id", ""), cit.get("file_id", ""))
                 if chunk:
-                    images.append(chunk)
-                    # Also map by filename if present
+                    # Map filename
                     fname = (cit.get("filename") or "").strip().lower()
                     if fname and isinstance(cit.get("file_id"), str):
                         filename_to_fileid[fname] = cit["file_id"]
+                        id_to_filename[cit["file_id"]] = fname
+                    # Route based on content
+                    def _looks_like_image(buf: bytes) -> bool:
+                        try:
+                            if len(buf) < 12:
+                                return False
+                            b = buf[:12]
+                            if b.startswith(b"\x89PNG\r\n\x1a\n"):
+                                return True
+                            if b.startswith(b"\xff\xd8\xff"):
+                                return True
+                            if b.startswith(b"GIF87a") or b.startswith(b"GIF89a"):
+                                return True
+                            if b[:4] == b"RIFF" and buf[8:12] == b"WEBP":
+                                return True
+                            if b[:2] == b"BM":
+                                return True
+                        except Exception:
+                            return False
+                        return False
+                    if _looks_like_image(chunk):
+                        images.append(chunk)
+                    else:
+                        name = fname or f"{cit.get('file_id','cfile')}.bin"
+                        files.append({"name": name, "bytes": chunk})
             except Exception:
                 continue
 
@@ -629,12 +666,16 @@ class OpenAIClient:
                 file_resp = await self.client.files.content(fid)
                 # file_resp is an httpx.Response-like object with bytes in .read()
                 chunk = await file_resp.aread() if hasattr(file_resp, "aread") else file_resp.read()
-                if chunk and _looks_like_image(chunk):
-                    images.append(chunk)
+                if chunk:
+                    if _looks_like_image(chunk):
+                        images.append(chunk)
+                    else:
+                        name = id_to_filename.get(fid) or f"{fid}.bin"
+                        files.append({"name": name, "bytes": chunk})
             except Exception:
                 continue
 
-        return {"text": text or "", "images": images}
+        return {"text": text or "", "images": images, "files": files}
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
     async def generate_image(

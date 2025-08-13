@@ -719,13 +719,27 @@ class GPT5Assistant(commands.Cog):
         # Send embed first
         await ctx.send(embed=embed)
 
-        # If tools run produced images, attach them so users can see them inline
+        # If tools run produced images/files, attach them so users can see them inline
         try:
             if 'result' in locals():
                 imgs = result.get('images') or []
                 for idx, img in enumerate(imgs):
                     try:
                         file = discord.File(BytesIO(img), filename=f"diag_image_{idx+1}.png")
+                        await ctx.send(file=file)
+                    except Exception:
+                        continue
+                fitems = result.get('files') or []
+                for item in fitems:
+                    try:
+                        name = item.get('name') or 'attachment.bin'
+                        data = item.get('bytes')
+                        if not isinstance(name, str) or not isinstance(data, (bytes, bytearray)):
+                            continue
+                        if len(data) > 7_900_000:
+                            await ctx.send(f"Generated a file '{name}' (~{len(data)//1024} KB), but it's too large to attach here.")
+                            continue
+                        file = discord.File(BytesIO(data), filename=name)
                         await ctx.send(file=file)
                     except Exception:
                         continue

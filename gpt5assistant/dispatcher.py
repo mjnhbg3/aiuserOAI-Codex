@@ -405,6 +405,7 @@ class Dispatcher:
                     result = await self.client.respond_collect(msgs, options)
                 text = result.get("text", "")
                 images = result.get("images") or []
+                files = result.get("files") or []
                 if patterns:
                     # recent authors for {authorname}
                     authors = []
@@ -424,6 +425,21 @@ class Dispatcher:
                 for idx, img in enumerate(images):
                     file = discord.File(BytesIO(img), filename=f"image_{idx+1}.png")
                     await message.channel.send(file=file)
+                # Send non-image files
+                for item in files:
+                    try:
+                        name = item.get("name") or "attachment.bin"
+                        data = item.get("bytes")
+                        if not isinstance(name, str) or not isinstance(data, (bytes, bytearray)):
+                            continue
+                        # Skip very large files to avoid Discord limits (approx 8MB default)
+                        if len(data) > 7_900_000:
+                            await message.channel.send(f"Generated a file '{name}' (~{len(data)//1024} KB), but it's too large to attach here.")
+                            continue
+                        file = discord.File(BytesIO(data), filename=name)
+                        await message.channel.send(file=file)
+                    except Exception:
+                        continue
                 # Minimal fallback: if absolutely nothing, inform user without extra requests
                 if not text.strip() and not images:
                     await message.channel.send("I couldn’t produce a result for that. If you asked for an image, ensure the image tool is enabled: [p]gpt5 config tools enable image.")
