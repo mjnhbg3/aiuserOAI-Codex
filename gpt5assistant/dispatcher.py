@@ -415,6 +415,28 @@ class Dispatcher:
                 text = result.get("text", "")
                 images = result.get("images") or []
                 files = result.get("files") or []
+                # Identify any sandbox container links like [name](sandbox:/mnt/data/...) to replace with attachment URLs
+                referenced_names: list[str] = []
+                if text:
+                    i = 0
+                    n = len(text)
+                    while i < n:
+                        lb = text.find('[', i)
+                        if lb == -1:
+                            break
+                        rb = text.find(']', lb + 1)
+                        if rb == -1 or rb + 1 >= n or text[rb + 1] != '(':
+                            i = lb + 1
+                            continue
+                        rp = text.find(')', rb + 2)
+                        if rp == -1:
+                            break
+                        label = text[lb + 1:rb]
+                        link = text[rb + 2:rp]
+                        if (link.startswith('sandbox:') or link.startswith('/mnt/data')) and label:
+                            if label not in referenced_names:
+                                referenced_names.append(label)
+                        i = rp + 1
                 if patterns:
                     # recent authors for {authorname}
                     authors = []
@@ -426,29 +448,100 @@ class Dispatcher:
                     text = await apply_removelist(
                         patterns=patterns, text=text, botname=botname, recent_authors=authors
                     )
-                # Send text
+                # If we need to replace sandbox links, post attachments first to get working URLs
+                name_to_url: dict[str, str] = {}
+                if referenced_names and (images or files):
+                    # Send images with filenames matching referenced names when possible
+                    img_name_idx = 0
+                    for idx, img in enumerate(images):
+                        try:
+                            fname = None
+                            # assign the next referenced image-looking name if available
+                            while img_name_idx < len(referenced_names):
+                                candidate = referenced_names[img_name_idx]
+                                img_name_idx += 1
+                                low = candidate.lower()
+                                if any(low.endswith(ext) for ext in ('.png','.jpg','.jpeg','.gif','.webp','.bmp','.tif','.tiff')):
+                                    fname = candidate
+                                    break
+                            if not fname:
+                                fname = f"image_{idx+1}.png"
+                            msg_img = await message.channel.send(file=discord.File(BytesIO(img), filename=fname))
+                            if msg_img.attachments:
+                                att = msg_img.attachments[0]
+                                name_to_url[att.filename] = att.url
+                        except Exception:
+                            continue
+                    # Send files and capture URLs
+                    for item in files:
+                        try:
+                            name = item.get("name") or "attachment.bin"
+                            data = item.get("bytes")
+                            if not isinstance(name, str) or not isinstance(data, (bytes, bytearray)):
+                                continue
+                            if len(data) > 7_900_000:
+                                await message.channel.send(f"Generated a file '{name}' (~{len(data)//1024} KB), but it's too large to attach here.")
+                                continue
+                            msg_file = await message.channel.send(file=discord.File(BytesIO(data), filename=name))
+                            if msg_file.attachments:
+                                att = msg_file.attachments[0]
+                                name_to_url[att.filename] = att.url
+                        except Exception:
+                            continue
+                    # Replace sandbox links with working attachment URLs
+                    if name_to_url and text:
+                        out = []
+                        i = 0
+                        n = len(text)
+                        while i < n:
+                            lb = text.find('[', i)
+                            if lb == -1:
+                                out.append(text[i:])
+                                break
+                            rb = text.find(']', lb + 1)
+                            if rb == -1 or rb + 1 >= n or text[rb + 1] != '(':
+                                out.append(text[i:lb+1])
+                                i = lb + 1
+                                continue
+                            rp = text.find(')', rb + 2)
+                            if rp == -1:
+                                out.append(text[i:])
+                                break
+                            label = text[lb + 1:rb]
+                            link = text[rb + 2:rp]
+                            if (link.startswith('sandbox:') or link.startswith('/mnt/data')) and label in name_to_url:
+                                out.append(text[i:lb])
+                                out.append(f"[{label}]({name_to_url[label]})")
+                                i = rp + 1
+                            else:
+                                out.append(text[i:rp+1])
+                                i = rp + 1
+                        text = ''.join(out)
+                # Send text after any replacements
                 if text and text.strip():
                     for ch in chunk_message(text):
                         await message.channel.send(ch)
-                # Send images
-                for idx, img in enumerate(images):
-                    file = discord.File(BytesIO(img), filename=f"image_{idx+1}.png")
-                    await message.channel.send(file=file)
-                # Send non-image files
-                for item in files:
-                    try:
-                        name = item.get("name") or "attachment.bin"
-                        data = item.get("bytes")
-                        if not isinstance(name, str) or not isinstance(data, (bytes, bytearray)):
-                            continue
-                        # Skip very large files to avoid Discord limits (approx 8MB default)
-                        if len(data) > 7_900_000:
-                            await message.channel.send(f"Generated a file '{name}' (~{len(data)//1024} KB), but it's too large to attach here.")
-                            continue
-                        file = discord.File(BytesIO(data), filename=name)
+                # If we didn't pre-send attachments, send them now
+                if not referenced_names:
+                    for idx, img in enumerate(images):
+                        file = discord.File(BytesIO(img), filename=f"image_{idx+1}.png")
                         await message.channel.send(file=file)
-                    except Exception:
-                        continue
+                    for item in files:
+                        try:
+                            name = item.get("name") or "attachment.bin"
+                            data = item.get("bytes")
+                            if not isinstance(name, str) or not isinstance(data, (bytes, bytearray)):
+                                continue
+                            if len(data) > 7_900_000:
+                                await message.channel.send(f"Generated a file '{name}' (~{len(data)//1024} KB), but it's too large to attach here.")
+                                continue
+                            file = discord.File(BytesIO(data), filename=name)
+                            await message.channel.send(file=file)
+                        except Exception:
+                            continue
+                # Minimal fallback
+                if not text.strip() and not images and not files:
+                    await message.channel.send("I couldn’t produce a result for that. If you asked for an image, ensure the image tool is enabled: $gpt5 config tools enable image.")
                 # Minimal fallback: if absolutely nothing, inform user without extra requests
                 if not text.strip() and not images:
                     await message.channel.send("I couldn’t produce a result for that. If you asked for an image, ensure the image tool is enabled: [p]gpt5 config tools enable image.")
