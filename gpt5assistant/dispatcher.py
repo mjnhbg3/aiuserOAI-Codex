@@ -107,10 +107,8 @@ class Dispatcher:
                     content = content[len(mstr):].strip()
                     break
 
-        if looks_like_image_request(content) and (gconf["tools"].get("image", True)):
-            await self._image_path(message, content, gconf)
-        else:
-            await self._chat_path(message, content, gconf)
+        # Route all requests through chat; allow the model to select tools, including image generation.
+        await self._chat_path(message, content, gconf)
 
     async def _chat_path(self, message: discord.Message, content: str, gconf: Dict[str, Any]) -> None:
         lock = self._get_lock(message.channel.id)
@@ -150,8 +148,43 @@ class Dispatcher:
             # Determine vector store availability; disable file_search tool if none
             vector_store_id = gconf.get("file_kb_id") or None
             effective_tools = dict(gconf["tools"])  # shallow copy
-            if effective_tools.get("file_search") and not vector_store_id:
+            if effective_tools.get("file_search"):
+                # Do not use vector stores for files; only read current attachments
                 effective_tools["file_search"] = False
+
+            # Collect and upload current message attachments for inline reading/vision
+            inline_file_ids: list[str] = []
+            inline_image_ids: list[str] = []
+            if getattr(message, "attachments", None):
+                file_bytes: list[bytes] = []
+                fnames: list[str] = []
+                kinds: list[str] = []
+                for a in message.attachments:
+                    ctype = a.content_type or ""
+                    # Skip very large files (>20MB) to avoid timeouts
+                    try:
+                        if a.size and a.size > 20 * 1024 * 1024:
+                            continue
+                    except Exception:
+                        pass
+                    try:
+                        data = await a.read()
+                    except Exception:
+                        continue
+                    file_bytes.append(data)
+                    fnames.append(a.filename or "attachment")
+                    kinds.append(ctype)
+                if file_bytes:
+                    try:
+                        ids = await self.client.index_files(file_bytes, fnames)
+                        for fid, ctype in zip(ids, kinds):
+                            if isinstance(ctype, str) and ctype.startswith("image/"):
+                                inline_image_ids.append(fid)
+                            else:
+                                inline_file_ids.append(fid)
+                    except Exception:
+                        inline_file_ids = []
+                        inline_image_ids = []
 
             options = ChatOptions(
                 model=gconf["model"],
@@ -160,8 +193,10 @@ class Dispatcher:
                 max_tokens=gconf["max_tokens"],
                 temperature=gconf["temperature"],
                 system_prompt=system_prompt,
-                file_ids=gconf.get("file_ids") or None,
-                vector_store_id=vector_store_id,
+                file_ids=None,
+                vector_store_id=None,
+                inline_file_ids=inline_file_ids or None,
+                inline_image_ids=inline_image_ids or None,
             )
 
             sent_msg: Optional[discord.Message] = None

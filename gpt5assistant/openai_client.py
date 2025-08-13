@@ -19,6 +19,9 @@ class ChatOptions:
     system_prompt: str
     file_ids: Optional[List[str]] = None
     vector_store_id: Optional[str] = None
+    # Attachments from the current message
+    inline_file_ids: Optional[List[str]] = None
+    inline_image_ids: Optional[List[str]] = None
 
 
 class OpenAIClient:
@@ -53,9 +56,18 @@ class OpenAIClient:
             arr.append({"type": "code_interpreter"})
         return arr
 
-    def _to_input(self, messages: List[Dict[str, Any]], *, file_ids: Optional[List[str]] = None, enable_file_search: bool = False) -> List[Dict[str, Any]]:
+    def _to_input(
+        self,
+        messages: List[Dict[str, Any]],
+        *,
+        file_ids: Optional[List[str]] = None,
+        enable_file_search: bool = False,
+        inline_file_ids: Optional[List[str]] = None,
+        inline_image_ids: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         formatted: List[Dict[str, Any]] = []
         files_added = False
+        inline_files_added = False
         for m in messages:
             role = m.get("role", "user")
             content = m.get("content", "")
@@ -74,6 +86,15 @@ class OpenAIClient:
                     for fid in file_ids:
                         parts.append({"type": "input_file", "file_id": fid})
                     files_added = True
+                # Always allow attaching current message files/images on first user message
+                if (not inline_files_added) and role == "user":
+                    if inline_file_ids:
+                        for fid in inline_file_ids:
+                            parts.append({"type": "input_file", "file_id": fid})
+                    if inline_image_ids:
+                        for fid in inline_image_ids:
+                            parts.append({"type": "input_image", "image_file": {"file_id": fid}})
+                    inline_files_added = True
                 formatted.append({"type": "message", "role": role, "content": parts})
             elif role == "assistant":
                 # Encode prior assistant replies as output messages
@@ -111,7 +132,13 @@ class OpenAIClient:
         # For reliability with tool calls, use non-streaming create and yield the final text.
         resp = await self.client.responses.create(
             model=options.model,
-            input=self._to_input(messages, file_ids=options.file_ids, enable_file_search=enable_fs),
+            input=self._to_input(
+                messages,
+                file_ids=options.file_ids,
+                enable_file_search=enable_fs,
+                inline_file_ids=options.inline_file_ids,
+                inline_image_ids=options.inline_image_ids,
+            ),
             tools=self._tools_array(options.tools, vector_store_id=options.vector_store_id),
             reasoning={"effort": options.reasoning},
             max_output_tokens=options.max_tokens,

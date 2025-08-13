@@ -43,6 +43,9 @@ class ChatOptions:
     temperature: float
     system_prompt: str
     file_ids: list | None
+    vector_store_id: str | None = None
+    inline_file_ids: list | None = None
+    inline_image_ids: list | None = None
 
 
 class OpenAIClient:  # not used here
