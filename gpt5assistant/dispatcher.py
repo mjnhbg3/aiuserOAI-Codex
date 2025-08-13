@@ -155,6 +155,7 @@ class Dispatcher:
             # Collect and upload current message attachments for inline reading/vision
             inline_file_ids: list[str] = []
             inline_image_ids: list[str] = []
+            inline_image_urls: list[str] = []
             if getattr(message, "attachments", None):
                 file_bytes: list[bytes] = []
                 fnames: list[str] = []
@@ -167,6 +168,16 @@ class Dispatcher:
                             continue
                     except Exception:
                         pass
+                    # For images, prefer using the Discord CDN URL directly
+                    if isinstance(ctype, str) and ctype.startswith("image/"):
+                        try:
+                            inline_image_urls.append(a.url)  # type: ignore[attr-defined]
+                            # Do not upload image bytes when URL is available
+                            fnames.append(a.filename or "attachment")
+                            kinds.append(ctype)
+                            continue
+                        except Exception:
+                            pass
                     try:
                         data = await a.read()
                     except Exception:
@@ -211,6 +222,15 @@ class Dispatcher:
                                 continue
                         except Exception:
                             pass
+                        # Prefer URL for images
+                        if isinstance(ctype, str) and ctype.startswith("image/"):
+                            try:
+                                inline_image_urls.append(a.url)  # type: ignore[attr-defined]
+                                fnames_r.append(a.filename or "attachment")
+                                kinds_r.append(ctype)
+                                continue
+                            except Exception:
+                                pass
                         try:
                             data = await a.read()
                         except Exception:
@@ -238,7 +258,7 @@ class Dispatcher:
             # If current or replied-to attachments are present, gently steer the model
             # to use them directly instead of referencing prior tool call IDs.
             sys_prompt_aug = system_prompt
-            if (inline_image_ids or inline_file_ids):
+            if (inline_image_urls or inline_image_ids or inline_file_ids):
                 sys_prompt_aug = (
                     f"{system_prompt}\n\n"
                     "You have access to the user's current attachments in this turn. "
@@ -257,6 +277,7 @@ class Dispatcher:
                 vector_store_id=None,
                 inline_file_ids=inline_file_ids or None,
                 inline_image_ids=inline_image_ids or None,
+                inline_image_urls=inline_image_urls or None,
                 code_container_type=code_container_type or None,
             )
 

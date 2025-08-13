@@ -591,12 +591,22 @@ class GPT5Assistant(commands.Cog):
         # If the diag command message has attachments, include them inline for the tools test
         inline_file_ids: list[str] = []
         inline_image_ids: list[str] = []
+        inline_image_urls: list[str] = []
         if getattr(ctx.message, "attachments", None):
             contents: list[bytes] = []
             names: list[str] = []
             kinds: list[str] = []
             for a in ctx.message.attachments:
                 ctype = a.content_type or ""
+                # Prefer URL for images
+                if isinstance(ctype, str) and ctype.startswith("image/"):
+                    try:
+                        inline_image_urls.append(a.url)  # type: ignore[attr-defined]
+                        names.append(a.filename or "attachment")
+                        kinds.append(ctype)
+                        continue
+                    except Exception:
+                        pass
                 try:
                     data = await a.read()
                 except Exception:
@@ -646,6 +656,7 @@ class GPT5Assistant(commands.Cog):
             # Include inline attachments for this diag run
             opts.inline_file_ids = inline_file_ids or None
             opts.inline_image_ids = inline_image_ids or None
+            opts.inline_image_urls = inline_image_urls or None
             result = await client.respond_collect(messages, opts)
             ok_tools = result.get("text", "") or (f"[images: {len(result.get('images') or [])}]" if result.get("images") else "")
         except Exception as e:

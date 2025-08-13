@@ -23,6 +23,7 @@ class ChatOptions:
     # Attachments from the current message
     inline_file_ids: Optional[List[str]] = None
     inline_image_ids: Optional[List[str]] = None
+    inline_image_urls: Optional[List[str]] = None
     # Code interpreter container type (model/environment specific)
     code_container_type: Optional[str] = None
 
@@ -77,6 +78,7 @@ class OpenAIClient:
         enable_file_search: bool = False,
         inline_file_ids: Optional[List[str]] = None,
         inline_image_ids: Optional[List[str]] = None,
+        inline_image_urls: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         formatted: List[Dict[str, Any]] = []
         files_added = False
@@ -108,6 +110,9 @@ class OpenAIClient:
                         for fid in inline_image_ids:
                             # Per API Reference, provide file IDs under 'image_file'
                             parts.append({"type": "input_image", "image_file": {"file_id": fid}})
+                    if inline_image_urls:
+                        for url in inline_image_urls:
+                            parts.append({"type": "input_image", "image_url": {"url": url}})
                     inline_files_added = True
                 formatted.append({"type": "message", "role": role, "content": parts})
             elif role == "assistant":
@@ -152,6 +157,7 @@ class OpenAIClient:
                 enable_file_search=enable_fs,
                 inline_file_ids=options.inline_file_ids,
                 inline_image_ids=options.inline_image_ids,
+                inline_image_urls=options.inline_image_urls,
             ),
             tools=self._tools_array(
                 options.tools,
@@ -227,6 +233,7 @@ class OpenAIClient:
                 enable_file_search=enable_fs,
                 inline_file_ids=options.inline_file_ids,
                 inline_image_ids=options.inline_image_ids,
+                inline_image_urls=options.inline_image_urls,
             ),
             tools=self._tools_array(
                 options.tools,
