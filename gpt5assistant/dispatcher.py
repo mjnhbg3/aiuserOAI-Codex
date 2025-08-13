@@ -128,8 +128,6 @@ class Dispatcher:
 
     async def _chat_path(self, message: discord.Message, content: str, gconf: Dict[str, Any]) -> None:
         lock = self._get_lock(message.channel.id)
-        if lock.locked():
-            return
         async with lock:
             # Determine guild prefixes to filter command messages from context
             prefixes: list[str] = []
@@ -642,8 +640,6 @@ class Dispatcher:
 
     async def _image_path(self, message: discord.Message, content: str, gconf: Dict[str, Any]) -> None:
         lock = self._get_lock(message.channel.id)
-        if lock.locked():
-            return
         async with lock:
             # Find candidate base image from current message or the referenced message
             base_image_bytes: Optional[bytes] = None
