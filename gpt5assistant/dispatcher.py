@@ -419,7 +419,74 @@ class Dispatcher:
             try:
                 patterns = gconf.get("removelist_regexes", []) or []
                 async with message.channel.typing():
-                    result = await self.client.respond_collect(msgs, options)
+                    # Implement two-call approach for code_interpreter billing optimization
+                    # Call 1: If code_interpreter is enabled, first try without it but with sentinel function
+                    if effective_tools.get("code_interpreter"):
+                        # Create options for first call without code_interpreter but with sentinel
+                        first_call_tools = dict(effective_tools)
+                        first_call_tools["code_interpreter"] = False  # Disable CI for first call
+                        
+                        first_options = ChatOptions(
+                            model=options.model,
+                            tools=first_call_tools,
+                            reasoning=options.reasoning,
+                            max_tokens=options.max_tokens,
+                            temperature=options.temperature,
+                            system_prompt=options.system_prompt,
+                            file_ids=options.file_ids,
+                            vector_store_id=options.vector_store_id,
+                            inline_file_ids=options.inline_file_ids,
+                            inline_image_ids=options.inline_image_ids,
+                            inline_image_urls=options.inline_image_urls,
+                            code_container_type=options.code_container_type,
+                            include_python_sentinel=True,  # Include sentinel function
+                        )
+                        
+                        # Make first call
+                        first_result = await self.client.respond_collect(msgs, first_options)
+                        
+                        # Check if model called the sentinel function
+                        python_requested = False
+                        try:
+                            # Look for function calls in the response
+                            output = getattr(first_result.get("_raw_response", {}), "output", None) or []
+                            if isinstance(output, list):
+                                for msg in output:
+                                    content = getattr(msg, "content", None) or msg.get("content", []) if isinstance(msg, dict) else []
+                                    if isinstance(content, list):
+                                        for c in content:
+                                            ctype = getattr(c, "type", None) or c.get("type") if isinstance(c, dict) else None
+                                            if ctype == "function_call":
+                                                fname = None
+                                                if hasattr(c, "function"):
+                                                    fname = getattr(c.function, "name", None)
+                                                elif isinstance(c, dict) and "function" in c:
+                                                    fname = c["function"].get("name")
+                                                if fname == "request_python":
+                                                    python_requested = True
+                                                    break
+                                        if python_requested:
+                                            break
+                                    if python_requested:
+                                        break
+                        except Exception:
+                            pass
+                        
+                        if python_requested:
+                            # Model requested Python - make second call with code_interpreter enabled
+                            # Use the response ID from first call to continue the thread and preserve reasoning
+                            first_response_id = first_result.get("response_id")
+                            if first_response_id:
+                                options.previous_response_id = first_response_id
+                            
+                            # Make second call with code_interpreter enabled
+                            result = await self.client.respond_collect(msgs, options)
+                        else:
+                            # Model didn't request Python - use first result (no container charge)
+                            result = first_result
+                    else:
+                        # code_interpreter not enabled, normal call
+                        result = await self.client.respond_collect(msgs, options)
                 text = result.get("text", "")
                 images = result.get("images") or []
                 image_names = result.get("image_names") or [None] * len(images)

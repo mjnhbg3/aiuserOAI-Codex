@@ -27,6 +27,10 @@ class ChatOptions:
     inline_image_urls: Optional[List[str]] = None
     # Code interpreter container type (model/environment specific)
     code_container_type: Optional[str] = None
+    # Whether to include the Python sentinel function
+    include_python_sentinel: bool = False
+    # Previous response ID for threading
+    previous_response_id: Optional[str] = None
 
 
 class OpenAIClient:
@@ -99,7 +103,7 @@ class OpenAIClient:
         *,
         vector_store_id: Optional[str],
         code_container_type: Optional[str] = None,
-        has_files: bool = False,
+        include_python_sentinel: bool = False,
     ) -> List[Dict[str, Any]]:
         arr: List[Dict[str, Any]] = []
         if tools.get("web_search"):
@@ -107,16 +111,32 @@ class OpenAIClient:
         if tools.get("file_search") and vector_store_id:
             arr.append({"type": "file_search", "vector_store_ids": [vector_store_id]})
         if tools.get("code_interpreter"):
-            # Only include container spec if files are present to avoid unnecessary container creation
-            if has_files:
-                ctype = (code_container_type or "auto").strip()
-                arr.append({"type": "code_interpreter", "container": {"type": ctype}})
-            else:
-                # Without container spec, tool is available but no container is pre-created
-                arr.append({"type": "code_interpreter"})
+            ctype = (code_container_type or "auto").strip()
+            arr.append({"type": "code_interpreter", "container": {"type": ctype}})
         if tools.get("image"):
             # Allow the model to call image generation natively via Responses tools
             arr.append({"type": "image_generation"})
+        
+        # Add sentinel function to request Python/code_interpreter when needed
+        if include_python_sentinel:
+            arr.append({
+                "type": "function",
+                "function": {
+                    "name": "request_python",
+                    "description": "Call this function if you need to run Python code, perform calculations, analyze data, create visualizations, or do any computational work that requires a Python environment.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "reason": {
+                                "type": "string",
+                                "description": "Brief explanation of why Python is needed for this task"
+                            }
+                        },
+                        "required": ["reason"]
+                    }
+                }
+            })
+        
         return arr
 
     def _to_input(
@@ -199,9 +219,10 @@ class OpenAIClient:
         enable_fs = bool(options.tools.get("file_search") and options.vector_store_id)
 
         # For reliability with tool calls, use non-streaming create and yield the final text.
-        resp = await self.client.responses.create(
-            model=options.model,
-            input=self._to_input(
+        # Build request parameters
+        create_params = {
+            "model": options.model,
+            "input": self._to_input(
                 messages,
                 file_ids=options.file_ids,
                 enable_file_search=enable_fs,
@@ -209,17 +230,23 @@ class OpenAIClient:
                 inline_image_ids=options.inline_image_ids,
                 inline_image_urls=options.inline_image_urls,
             ),
-            tools=self._tools_array(
+            "tools": self._tools_array(
                 options.tools,
                 vector_store_id=options.vector_store_id,
                 code_container_type=options.code_container_type,
-                has_files=bool(options.inline_file_ids),
+                include_python_sentinel=options.include_python_sentinel,
             ),
-            reasoning={"effort": options.reasoning},
-            max_output_tokens=options.max_tokens,
-            tool_choice="auto",
-            instructions=options.system_prompt,
-        )
+            "reasoning": {"effort": options.reasoning},
+            "max_output_tokens": options.max_tokens,
+            "tool_choice": "auto",
+            "instructions": options.system_prompt,
+        }
+        
+        # Add previous_response_id for threading if provided
+        if options.previous_response_id:
+            create_params["previous_response_id"] = options.previous_response_id
+        
+        resp = await self.client.responses.create(**create_params)
         # Extract output text robustly across SDK variants
         text = None
         try:
@@ -286,9 +313,10 @@ class OpenAIClient:
         enable_fs = bool(options.tools.get("file_search") and options.vector_store_id)
 
         _dbg("responses.create: sending request")
-        resp = await self.client.responses.create(
-            model=options.model,
-            input=self._to_input(
+        # Build request parameters
+        create_params = {
+            "model": options.model,
+            "input": self._to_input(
                 messages,
                 file_ids=options.file_ids,
                 enable_file_search=enable_fs,
@@ -296,17 +324,23 @@ class OpenAIClient:
                 inline_image_ids=options.inline_image_ids,
                 inline_image_urls=options.inline_image_urls,
             ),
-            tools=self._tools_array(
+            "tools": self._tools_array(
                 options.tools,
                 vector_store_id=options.vector_store_id,
                 code_container_type=options.code_container_type,
-                has_files=bool(options.inline_file_ids),
+                include_python_sentinel=options.include_python_sentinel,
             ),
-            reasoning={"effort": options.reasoning},
-            max_output_tokens=options.max_tokens,
-            tool_choice="auto",
-            instructions=options.system_prompt,
-        )
+            "reasoning": {"effort": options.reasoning},
+            "max_output_tokens": options.max_tokens,
+            "tool_choice": "auto",
+            "instructions": options.system_prompt,
+        }
+        
+        # Add previous_response_id for threading if provided
+        if options.previous_response_id:
+            create_params["previous_response_id"] = options.previous_response_id
+        
+        resp = await self.client.responses.create(**create_params)
 
         # If the response is still running tools, poll until completed or timeout
         status = getattr(resp, "status", None)
@@ -1210,7 +1244,14 @@ class OpenAIClient:
         except Exception:
             pass
 
-        result: Dict[str, Any] = {"text": text or "", "images": images, "image_names": image_names, "files": files}
+        result: Dict[str, Any] = {
+            "text": text or "", 
+            "images": images, 
+            "image_names": image_names, 
+            "files": files, 
+            "_raw_response": resp,
+            "response_id": getattr(resp, "id", None)
+        }
         if debug:
             result["debug"] = dbg
         return result
