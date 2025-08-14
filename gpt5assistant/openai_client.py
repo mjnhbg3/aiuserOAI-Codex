@@ -121,19 +121,17 @@ class OpenAIClient:
         if include_python_sentinel:
             arr.append({
                 "type": "function",
-                "function": {
-                    "name": "request_python",
-                    "description": "Call this function if you need to run Python code, perform calculations, analyze data, create visualizations, or do any computational work that requires a Python environment.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "reason": {
-                                "type": "string",
-                                "description": "Brief explanation of why Python is needed for this task"
-                            }
-                        },
-                        "required": ["reason"]
-                    }
+                "name": "request_python",
+                "description": "Call this function if you need to run Python code, perform calculations, analyze data, create visualizations, or do any computational work that requires a Python environment.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "reason": {
+                            "type": "string",
+                            "description": "Brief explanation of why Python is needed for this task"
+                        }
+                    },
+                    "required": ["reason"]
                 }
             })
         
