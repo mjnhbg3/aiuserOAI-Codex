@@ -467,48 +467,8 @@ class Dispatcher:
                         
                         if python_requested:
                             # Model requested Python - make second call with code_interpreter enabled
-                            # Use the response ID from first call to continue the thread and preserve reasoning
-                            first_response_id = first_result.get("response_id")
-                            if first_response_id:
-                                options.previous_response_id = first_response_id
-                            
-                            # Add tool output for the sentinel function call to the messages
-                            # Find the function call ID from the first response
-                            function_call_id = None
-                            try:
-                                raw_resp = first_result.get("_raw_response")
-                                if raw_resp and hasattr(raw_resp, 'output'):
-                                    for item in raw_resp.output:
-                                        if hasattr(item, 'type') and item.type == "function_call":
-                                            if hasattr(item, 'name') and item.name == "request_python":
-                                                function_call_id = getattr(item, 'id', None)
-                                                break
-                            except Exception:
-                                pass
-                            
-                            # Add the function call and response to messages for the second call
-                            if function_call_id:
-                                # Add assistant message with function call
-                                msgs.append({
-                                    "role": "assistant", 
-                                    "content": "",
-                                    "tool_calls": [{
-                                        "id": function_call_id,
-                                        "type": "function",
-                                        "function": {
-                                            "name": "request_python",
-                                            "arguments": "{\"reason\": \"Python execution requested\"}"
-                                        }
-                                    }]
-                                })
-                                # Add tool response
-                                msgs.append({
-                                    "role": "tool",
-                                    "tool_call_id": function_call_id,
-                                    "content": "Python execution approved. Code interpreter is now available."
-                                })
-                            
-                            # Make second call with code_interpreter enabled
+                            # Reset to original messages and use code interpreter directly
+                            # The model has already indicated it needs Python execution
                             result = await self.client.respond_collect(msgs, options)
                         else:
                             # Model didn't request Python - use first result (no container charge)
