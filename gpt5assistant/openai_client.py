@@ -99,6 +99,7 @@ class OpenAIClient:
         *,
         vector_store_id: Optional[str],
         code_container_type: Optional[str] = None,
+        has_files: bool = False,
     ) -> List[Dict[str, Any]]:
         arr: List[Dict[str, Any]] = []
         if tools.get("web_search"):
@@ -106,8 +107,13 @@ class OpenAIClient:
         if tools.get("file_search") and vector_store_id:
             arr.append({"type": "file_search", "vector_store_ids": [vector_store_id]})
         if tools.get("code_interpreter"):
-            ctype = (code_container_type or "auto").strip()
-            arr.append({"type": "code_interpreter", "container": {"type": ctype}})
+            # Only include container spec if files are present to avoid unnecessary container creation
+            if has_files:
+                ctype = (code_container_type or "auto").strip()
+                arr.append({"type": "code_interpreter", "container": {"type": ctype}})
+            else:
+                # Without container spec, tool is available but no container is pre-created
+                arr.append({"type": "code_interpreter"})
         if tools.get("image"):
             # Allow the model to call image generation natively via Responses tools
             arr.append({"type": "image_generation"})
@@ -207,6 +213,7 @@ class OpenAIClient:
                 options.tools,
                 vector_store_id=options.vector_store_id,
                 code_container_type=options.code_container_type,
+                has_files=bool(options.inline_file_ids),
             ),
             reasoning={"effort": options.reasoning},
             max_output_tokens=options.max_tokens,
@@ -293,6 +300,7 @@ class OpenAIClient:
                 options.tools,
                 vector_store_id=options.vector_store_id,
                 code_container_type=options.code_container_type,
+                has_files=bool(options.inline_file_ids),
             ),
             reasoning={"effort": options.reasoning},
             max_output_tokens=options.max_tokens,
