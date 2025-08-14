@@ -422,7 +422,8 @@ class Dispatcher:
                     # Implement two-call approach for code_interpreter billing optimization
                     # Call 1: If code_interpreter is enabled, first try without it but with sentinel function
                     if effective_tools.get("code_interpreter"):
-                        # Debug: This should trigger for your guild since code_interpreter is enabled
+                        # Debug: Two-call sentinel approach triggered
+                        print(f"[DEBUG] Two-call approach triggered for code_interpreter")
                         # Create options for first call without code_interpreter but with sentinel
                         first_call_tools = dict(effective_tools)
                         first_call_tools["code_interpreter"] = False  # Disable CI for first call
@@ -444,37 +445,35 @@ class Dispatcher:
                         )
                         
                         # Make first call
+                        print(f"[DEBUG] Making first call WITHOUT code_interpreter but WITH sentinel function")
                         first_result = await self.client.respond_collect(msgs, first_options)
                         
                         # Check if model called the sentinel function
                         python_requested = False
                         try:
-                            # Look for function calls in the response
-                            output = getattr(first_result.get("_raw_response", {}), "output", None) or []
-                            if isinstance(output, list):
-                                for msg in output:
-                                    content = getattr(msg, "content", None) or msg.get("content", []) if isinstance(msg, dict) else []
-                                    if isinstance(content, list):
-                                        for c in content:
-                                            ctype = getattr(c, "type", None) or c.get("type") if isinstance(c, dict) else None
-                                            if ctype == "function_call":
-                                                fname = None
-                                                if hasattr(c, "function"):
-                                                    fname = getattr(c.function, "name", None)
-                                                elif isinstance(c, dict) and "function" in c:
-                                                    fname = c["function"].get("name")
-                                                if fname == "request_python":
-                                                    python_requested = True
-                                                    break
-                                        if python_requested:
+                            # Check the raw response for function calls (using the correct format from docs)
+                            raw_resp = first_result.get("_raw_response")
+                            if raw_resp and hasattr(raw_resp, 'output'):
+                                print(f"[DEBUG] Found {len(raw_resp.output)} items in response output")
+                                for i, item in enumerate(raw_resp.output):
+                                    item_type = getattr(item, 'type', 'unknown')
+                                    print(f"[DEBUG] Item {i}: type={item_type}")
+                                    # Look for function call items exactly as shown in documentation
+                                    if hasattr(item, 'type') and item.type == "function_call":
+                                        item_name = getattr(item, 'name', 'unknown')
+                                        print(f"[DEBUG] Found function_call: {item_name}")
+                                        if hasattr(item, 'name') and item.name == "request_python":
+                                            python_requested = True
+                                            print(f"[DEBUG] Model called request_python sentinel function!")
+                                            print(f"[DEBUG] Function call arguments: {getattr(item, 'arguments', 'none')}")
                                             break
-                                    if python_requested:
-                                        break
-                        except Exception:
+                        except Exception as e:
+                            print(f"[DEBUG] Error detecting sentinel: {e}")
                             pass
                         
                         if python_requested:
                             # Model requested Python - make second call with code_interpreter enabled
+                            print(f"[DEBUG] Making second call with code_interpreter enabled")
                             # Use the response ID from first call to continue the thread and preserve reasoning
                             first_response_id = first_result.get("response_id")
                             if first_response_id:
@@ -484,6 +483,7 @@ class Dispatcher:
                             result = await self.client.respond_collect(msgs, options)
                         else:
                             # Model didn't request Python - use first result (no container charge)
+                            print(f"[DEBUG] Model didn't request Python, using first result (no container charge)")
                             result = first_result
                     else:
                         # code_interpreter not enabled, normal call
