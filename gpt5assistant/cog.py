@@ -685,9 +685,10 @@ class GPT5Assistant(commands.Cog):
             if eff_tools.get("file_search") and kb:
                 payload.append({"type": "file_search", "vector_store_ids": [kb]})
             if eff_tools.get("code_interpreter"):
+                # Note: In actual chat, the two-call sentinel approach is used to avoid unnecessary charges
                 ctype = await self.config.code_container_type()
                 ctype = (ctype or "auto").strip()
-                payload.append({"type": "code_interpreter", "container": {"type": ctype}})
+                payload.append({"type": "code_interpreter", "container": {"type": ctype}, "note": "two-call optimization in chat"})
             if eff_tools.get("image"):
                 payload.append({"type": "image_generation"})
             tools_payload_str = str(payload)

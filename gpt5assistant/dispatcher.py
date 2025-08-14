@@ -422,6 +422,7 @@ class Dispatcher:
                     # Implement two-call approach for code_interpreter billing optimization
                     # Call 1: If code_interpreter is enabled, first try without it but with sentinel function
                     if effective_tools.get("code_interpreter"):
+                        # Debug: This should trigger for your guild since code_interpreter is enabled
                         # Create options for first call without code_interpreter but with sentinel
                         first_call_tools = dict(effective_tools)
                         first_call_tools["code_interpreter"] = False  # Disable CI for first call
