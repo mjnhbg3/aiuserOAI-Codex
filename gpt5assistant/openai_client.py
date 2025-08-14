@@ -132,7 +132,7 @@ class OpenAIClient:
                         }
                     },
                     "required": ["reason"],
-                    "additionalProperties": false
+                    "additionalProperties": False
                 },
                 "strict": true
             })
