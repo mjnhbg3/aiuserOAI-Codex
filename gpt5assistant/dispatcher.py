@@ -462,7 +462,7 @@ class Dispatcher:
                                         if hasattr(item, 'name') and item.name == "request_python":
                                             python_requested = True
                                             break
-                        except Exception as e:
+                        except Exception:
                             pass
                         
                         if python_requested:
