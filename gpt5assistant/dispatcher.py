@@ -467,8 +467,7 @@ class Dispatcher:
                         
                         if python_requested:
                             # Model requested Python - make second call with code_interpreter enabled
-                            # Reset to original messages and use code interpreter directly
-                            # The model has already indicated it needs Python execution
+                            # Completely ignore the first result and only use the second call
                             result = await self.client.respond_collect(msgs, options)
                         else:
                             # Model didn't request Python - use first result (no container charge)
