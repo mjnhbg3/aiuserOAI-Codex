@@ -257,7 +257,9 @@ class Dispatcher:
                 file_bytes: list[bytes] = []
                 fnames: list[str] = []
                 kinds: list[str] = []
-                need_image_file_ids = bool(effective_tools.get("code_interpreter"))
+                # Don't preload files for code interpreter to avoid unnecessary container charges
+                # Let the model decide when to use code interpreter - files will be available via URLs
+                need_image_file_ids = False
                 for a in message.attachments:
                     ctype = a.content_type or ""
                     # Skip very large files (>20MB) to avoid timeouts
@@ -320,7 +322,8 @@ class Dispatcher:
                     file_bytes_r: list[bytes] = []
                     fnames_r: list[str] = []
                     kinds_r: list[str] = []
-                    need_image_file_ids_r = bool(effective_tools.get("code_interpreter"))
+                    # Don't preload replied files for code interpreter to avoid unnecessary charges
+                    need_image_file_ids_r = False
                     for a in replied.attachments:
                         ctype = a.content_type or ""
                         # Skip very large files (>20MB)
