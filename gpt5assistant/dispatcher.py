@@ -485,6 +485,14 @@ class Dispatcher:
                         await message.channel.send(
                             f"[debug] result: text={len(text or '')}B images={len(images)} files={len(files)}"
                         )
+                        # Check if images array contains duplicates
+                        if len(images) > 1:
+                            from hashlib import sha256
+                            image_hashes = [sha256(img).hexdigest()[:8] for img in images]
+                            await message.channel.send(f"[debug] image hashes: {image_hashes}")
+                        # Check refs detection
+                        refs_preview = str(refs)[:100] if refs else "empty"
+                        await message.channel.send(f"[debug] refs: {refs_preview}")
                 except Exception:
                     pass
                 # Identify any sandbox container links like [name](sandbox:/mnt/data/...) to replace with attachment URLs
