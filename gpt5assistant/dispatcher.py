@@ -537,9 +537,16 @@ class Dispatcher:
                 name_to_url: dict[str, str] = {}
                 if refs and (images or files):
                     # Send images with filenames matching referenced names when possible
-                    used_img = [False] * len(images)
+                    # Track which images we've sent to avoid duplicates
+                    sent_image_hashes = set()
                     for idx, img in enumerate(images):
                         try:
+                            # Check if this image was already sent
+                            from hashlib import sha256
+                            img_hash = sha256(img).hexdigest()
+                            if img_hash in sent_image_hashes:
+                                continue
+                            
                             # Prefer a referenced filename from sandbox links
                             fname = None
                             for (label, target) in refs:
@@ -558,6 +565,7 @@ class Dispatcher:
                             if msg_img.attachments:
                                 att = msg_img.attachments[0]
                                 name_to_url[att.filename] = att.url
+                            sent_image_hashes.add(img_hash)
                         except Exception:
                             continue
                     # Send files and capture URLs
@@ -570,6 +578,21 @@ class Dispatcher:
                             if len(data) > 7_900_000:
                                 await message.channel.send(f"Generated a file '{name}' (~{len(data)//1024} KB), but it's too large to attach here.")
                                 continue
+                            # Check if this file contains image data that we've already sent
+                            is_image_file = False
+                            try:
+                                if isinstance(name, str):
+                                    low = name.lower()
+                                    if any(low.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff")):
+                                        is_image_file = True
+                                        file_hash = sha256(data).hexdigest()
+                                        if file_hash in sent_image_hashes:
+                                            # Skip this file as we've already sent the same image
+                                            continue
+                                        sent_image_hashes.add(file_hash)
+                            except Exception:
+                                pass
+                            
                             msg_file = await message.channel.send(file=discord.File(BytesIO(data), filename=name))
                             try:
                                 if bool(gconf.get("debug_attachments", False)):
