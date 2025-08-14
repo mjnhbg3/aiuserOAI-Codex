@@ -379,8 +379,7 @@ class Dispatcher:
             if effective_tools.get("code_interpreter"):
                 sys_prompt_aug = (
                     f"{sys_prompt_aug}\n\n"
-                    "When using the code interpreter and creating files, do not include sandbox:/mnt/data download links in your message."
-                    " Refer to files by name only; I will attach the actual files to the chat."
+                    "When creating computational outputs or files, refer to files by name only; I will attach the actual files to the chat."
                 )
 
             options = ChatOptions(
