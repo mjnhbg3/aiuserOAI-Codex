@@ -134,7 +134,7 @@ class OpenAIClient:
                     "required": ["reason"],
                     "additionalProperties": False
                 },
-                "strict": true
+                "strict": True
             })
         
         return arr
