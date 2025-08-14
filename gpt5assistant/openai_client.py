@@ -122,17 +122,19 @@ class OpenAIClient:
             arr.append({
                 "type": "function",
                 "name": "request_python",
-                "description": "Call this function if you need to run Python code, perform calculations, analyze data, create visualizations, or do any computational work that requires a Python environment.",
+                "description": "REQUIRED: Call this function when you need to execute Python code, create files, generate plots, perform calculations, or any computational task. Do NOT provide code directly - always call this function first.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "reason": {
                             "type": "string",
-                            "description": "Brief explanation of why Python is needed for this task"
+                            "description": "Brief explanation of why Python execution is needed"
                         }
                     },
-                    "required": ["reason"]
-                }
+                    "required": ["reason"],
+                    "additionalProperties": false
+                },
+                "strict": true
             })
         
         return arr

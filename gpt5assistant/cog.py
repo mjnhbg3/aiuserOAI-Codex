@@ -689,6 +689,8 @@ class GPT5Assistant(commands.Cog):
                 ctype = await self.config.code_container_type()
                 ctype = (ctype or "auto").strip()
                 payload.append({"type": "code_interpreter", "container": {"type": ctype}, "note": "two-call optimization in chat"})
+                # Show what the first call would look like
+                payload.append({"type": "function", "name": "request_python", "note": "sentinel function used in first call"})
             if eff_tools.get("image"):
                 payload.append({"type": "image_generation"})
             tools_payload_str = str(payload)
