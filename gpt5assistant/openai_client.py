@@ -1359,12 +1359,12 @@ class OpenAIClient:
         except Exception:
             resp = None
 
-        # Fallback: responses.create with previous_response_id + tool_result items
+        # Fallback: responses.create with previous_response_id + function_call_output items
         if resp is None:
             _dbg("submit_tool_outputs: falling back to responses.create")
             try:
                 items = [
-                    {"type": "tool_result", "call_id": t.get("tool_call_id") or t.get("call_id"), "output": t.get("output")}
+                    {"type": "function_call_output", "call_id": t.get("tool_call_id") or t.get("call_id"), "output": t.get("output")}
                     for t in (sdk_tool_outputs or tool_outputs)
                     if (isinstance(t, dict) and (t.get("tool_call_id") or t.get("call_id")) and t.get("output"))
                 ]

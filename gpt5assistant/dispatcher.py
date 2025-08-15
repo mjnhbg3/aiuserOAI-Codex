@@ -144,12 +144,15 @@ class Dispatcher:
                 
             memory_function_calls = []
             # Primary: top-level function_call items
+            debug_info.append(f"Checking for function calls in raw_resp.output: {len(getattr(raw_resp, 'output', []))}")
             for item in getattr(raw_resp, 'output', []) or []:
                 itype = getattr(item, 'type', None)
                 if isinstance(item, dict):
                     itype = item.get('type')
+                debug_info.append(f"Found output item type: {itype}")
                 if itype in ("function_call", "tool_call"):
                     name = getattr(item, 'name', None) if not isinstance(item, dict) else item.get('name')
+                    debug_info.append(f"Found function call: {name}")
                     if name in ("propose_memories", "save_memories"):
                         raw_args = getattr(item, 'arguments', {}) if not isinstance(item, dict) else item.get('arguments', {})
                         if isinstance(raw_args, str):
@@ -164,6 +167,7 @@ class Dispatcher:
                             (getattr(item, 'call_id', None) if not isinstance(item, dict) else item.get('call_id'))
                             or (getattr(item, 'id', None) if not isinstance(item, dict) else item.get('id'))
                         )
+                        debug_info.append(f"Function call details: name={name}, call_id={call_id}, args={parsed_args}")
                         memory_function_calls.append({
                             "call_id": call_id,
                             "name": name,
@@ -268,7 +272,7 @@ class Dispatcher:
                     except Exception:
                         out_str = str(output)
                     function_outputs.append({
-                        "type": "tool_result",
+                        "type": "function_call_output",
                         "call_id": call["call_id"],
                         "output": out_str
                     })
@@ -276,7 +280,7 @@ class Dispatcher:
                     # Return error output for this function call
                     debug_info.append(f"Error executing {call['name']}: {str(e)}")
                     function_outputs.append({
-                        "type": "tool_result", 
+                        "type": "function_call_output", 
                         "call_id": call["call_id"],
                         "output": f"Error: {str(e)}"
                     })
