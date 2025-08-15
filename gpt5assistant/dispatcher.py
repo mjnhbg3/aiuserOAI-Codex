@@ -132,6 +132,86 @@ class Dispatcher:
         # Route all requests through chat; allow the model to select tools, including image generation.
         await self._chat_path(message, content, gconf)
 
+    async def _process_memory_function_calls(self, result: dict, messages: list, options, guild_id: str, channel_id: str, user_id: str) -> dict:
+        """Process memory function calls and continue conversation if needed."""
+        try:
+            # Check if there are memory function calls in the raw response
+            raw_resp = result.get("_raw_response")
+            if not raw_resp or not hasattr(raw_resp, 'output'):
+                return result
+                
+            memory_function_calls = []
+            for item in raw_resp.output:
+                if hasattr(item, 'type') and item.type == "function_call":
+                    if hasattr(item, 'name') and item.name in ["propose_memories", "save_memories"]:
+                        memory_function_calls.append({
+                            "call_id": item.id,
+                            "name": item.name,
+                            "arguments": getattr(item, 'arguments', {})
+                        })
+            
+            if not memory_function_calls:
+                return result
+                
+            # Process each memory function call
+            function_outputs = []
+            for call in memory_function_calls:
+                try:
+                    # Execute the memory function
+                    output = await self.function_handler.handle_function_call(
+                        call["name"], 
+                        call["arguments"], 
+                        guild_id, 
+                        channel_id, 
+                        user_id
+                    )
+                    
+                    # Format function output for Responses API
+                    function_outputs.append({
+                        "type": "function_call_output",
+                        "call_id": call["call_id"],
+                        "output": str(output)
+                    })
+                except Exception as e:
+                    # Return error output for this function call
+                    function_outputs.append({
+                        "type": "function_call_output", 
+                        "call_id": call["call_id"],
+                        "output": f"Error: {str(e)}"
+                    })
+            
+            # If we have function outputs, continue the conversation
+            if function_outputs:
+                # Add function outputs to messages and continue conversation
+                updated_messages = messages + function_outputs
+                
+                # Create new options with previous_response_id to continue conversation
+                from .openai_client import ChatOptions
+                continue_options = ChatOptions(
+                    model=options.model,
+                    tools=options.tools,
+                    reasoning=options.reasoning,
+                    max_tokens=options.max_tokens,
+                    temperature=options.temperature,
+                    system_prompt=options.system_prompt,
+                    file_ids=options.file_ids,
+                    vector_store_id=options.vector_store_id,
+                    inline_file_ids=options.inline_file_ids,
+                    inline_image_ids=options.inline_image_ids,
+                    inline_image_urls=options.inline_image_urls,
+                    code_container_type=options.code_container_type,
+                    previous_response_id=raw_resp.id  # Continue conversation
+                )
+                
+                # Make follow-up call to get final response
+                final_result = await self.client.respond_collect(updated_messages, continue_options)
+                return final_result
+                
+        except Exception as e:
+            print(f"Error processing memory function calls: {e}")
+            
+        return result
+
     async def _chat_path(self, message: discord.Message, content: str, gconf: Dict[str, Any]) -> None:
         lock = self._get_lock(message.channel.id)
         async with lock:
@@ -511,6 +591,10 @@ class Dispatcher:
                     else:
                         # code_interpreter not enabled, normal call
                         result = await self.client.respond_collect(msgs, options)
+                
+                # Process memory function calls if present
+                result = await self._process_memory_function_calls(result, msgs, options, str(message.guild.id), str(message.channel.id), str(message.author.id))
+                
                 text = result.get("text", "")
                 images = result.get("images") or []
                 image_names = result.get("image_names") or [None] * len(images)
