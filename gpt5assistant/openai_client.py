@@ -139,6 +139,7 @@ class OpenAIClient:
         
         # Add memory function tools if memories are enabled
         if tools.get("memories"):
+            print(f"DEBUG: Adding memory function tools to request")
             # propose_memories - staging (no side effects)
             arr.append({
                 "type": "function",
