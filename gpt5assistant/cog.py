@@ -986,6 +986,27 @@ class GPT5Assistant(commands.Cog):
             embed.add_field(name="Vector Store", value=f"set ({kb[:10]}…)", inline=True)
         else:
             embed.add_field(name="Vector Store", value="not set", inline=True)
+            
+        # Add memory system status
+        if tools.get("memories"):
+            try:
+                dispatcher = await self._ensure_dispatcher()
+                memory_status = "initialized" if dispatcher._memory_initialized else "not initialized"
+                
+                # Check if memory system is actually working
+                if dispatcher._memory_initialized:
+                    try:
+                        stats = await dispatcher.memory_manager.storage.get_guild_stats(str(ctx.guild.id))
+                        memory_count = stats.get("total", 0)
+                        memory_status += f" ({memory_count} memories)"
+                    except Exception:
+                        memory_status += " (error getting stats)"
+                        
+                embed.add_field(name="Memory System", value=memory_status, inline=True)
+            except Exception as e:
+                embed.add_field(name="Memory System", value=f"error: {e}", inline=True)
+        else:
+            embed.add_field(name="Memory System", value="disabled", inline=True)
         if tools_payload_str:
             preview = tools_payload_str if len(tools_payload_str) <= 250 else tools_payload_str[:250] + "…"
             embed.add_field(name="Tools Payload", value=f"```json\n{preview}\n```", inline=False)
