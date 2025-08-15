@@ -61,8 +61,9 @@ class Memory:
 class MemoryStorage:
     """Handles database operations for memories."""
     
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, cog_instance=None):
         self.config = config
+        self.cog_instance = cog_instance
         self._db_path: Optional[str] = None
         
     async def initialize(self):
@@ -73,10 +74,14 @@ class MemoryStorage:
         # Use Red's data directory for storing the database
         from redbot.core.data_manager import cog_data_path
         try:
-            data_dir = cog_data_path(cog_instance=None)  # Get base data directory
-            self._db_path = str(data_dir / "gpt5assistant" / "memories.db")
-            # Ensure directory exists
-            (data_dir / "gpt5assistant").mkdir(parents=True, exist_ok=True)
+            if self.cog_instance:
+                data_dir = cog_data_path(self.cog_instance)
+                self._db_path = str(data_dir / "memories.db")
+                # Ensure directory exists
+                data_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                # Fallback to current directory if no cog instance
+                self._db_path = "memories.db"
         except Exception:
             # Fallback to current directory if data manager fails
             self._db_path = "memories.db"

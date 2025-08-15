@@ -238,8 +238,8 @@ class VectorStoreManager:
 class MemoryManager:
     """High-level memory management combining storage and vector store operations."""
     
-    def __init__(self, openai_client: OpenAIClient, config):
-        self.storage = MemoryStorage(config)
+    def __init__(self, openai_client: OpenAIClient, config, cog_instance=None):
+        self.storage = MemoryStorage(config, cog_instance)
         self.vector_manager = VectorStoreManager(openai_client, self.storage, config)
         self.config = config
         

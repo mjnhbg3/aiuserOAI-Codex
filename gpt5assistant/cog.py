@@ -45,7 +45,7 @@ class GPT5Assistant(commands.Cog):
     async def _ensure_dispatcher(self) -> Dispatcher:
         if self._dispatcher is None:
             client = await self._ensure_client()
-            self._dispatcher = Dispatcher(self.bot, self.config, client)
+            self._dispatcher = Dispatcher(self.bot, self.config, client, self)
         return self._dispatcher
 
     @commands.group(name="gpt5")
@@ -141,8 +141,8 @@ class GPT5Assistant(commands.Cog):
     async def gpt5_config_tools(self, ctx: commands.Context, action: str, tool: str) -> None:
         action = action.lower()
         tool = tool.lower()
-        if tool not in {"web_search", "file_search", "code_interpreter", "image"}:
-            await ctx.send("Unknown tool. Choose web_search|file_search|code_interpreter|image.")
+        if tool not in {"web_search", "file_search", "code_interpreter", "image", "memories"}:
+            await ctx.send("Unknown tool. Choose web_search|file_search|code_interpreter|image|memories.")
             return
         current = await self.config.guild(ctx.guild).tools()
         val = action == "enable"

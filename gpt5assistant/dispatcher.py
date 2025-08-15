@@ -23,13 +23,13 @@ from .function_handlers import FunctionCallHandler
 
 
 class Dispatcher:
-    def __init__(self, bot: commands.Bot, config: Config, client: OpenAIClient) -> None:
+    def __init__(self, bot: commands.Bot, config: Config, client: OpenAIClient, cog_instance=None) -> None:
         self.bot = bot
         self.config = config
         self.client = client
         self._locks: dict[int, asyncio.Lock] = {}
         self._last_intent_warn: dict[int, float] = {}
-        self.memory_manager = MemoryManager(client, config)
+        self.memory_manager = MemoryManager(client, config, cog_instance)
         self.function_handler = FunctionCallHandler(self.memory_manager)
         self._memory_initialized = False
 
