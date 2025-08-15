@@ -159,7 +159,11 @@ class Dispatcher:
                                 parsed_args = {}
                         else:
                             parsed_args = raw_args
-                        call_id = getattr(item, 'id', None) if not isinstance(item, dict) else item.get('id')
+                        # Prefer call_id if present, else fall back to id
+                        call_id = (
+                            (getattr(item, 'call_id', None) if not isinstance(item, dict) else item.get('call_id'))
+                            or (getattr(item, 'id', None) if not isinstance(item, dict) else item.get('id'))
+                        )
                         memory_function_calls.append({
                             "call_id": call_id,
                             "name": name,
@@ -185,7 +189,10 @@ class Dispatcher:
                                             parsed_args = {}
                                     else:
                                         parsed_args = raw_args
-                                    call_id = getattr(c, 'id', None) if not isinstance(c, dict) else c.get('id')
+                                    call_id = (
+                                        (getattr(c, 'call_id', None) if not isinstance(c, dict) else c.get('call_id'))
+                                        or (getattr(c, 'id', None) if not isinstance(c, dict) else c.get('id'))
+                                    )
                                     memory_function_calls.append({
                                         "call_id": call_id,
                                         "name": name,
@@ -255,10 +262,15 @@ class Dispatcher:
                     debug_info.append(f"Function output: {output}")
                     
                     # Format function output for Responses API
+                    try:
+                        import json as _json
+                        out_str = _json.dumps(output, ensure_ascii=False)
+                    except Exception:
+                        out_str = str(output)
                     function_outputs.append({
                         "type": "tool_result",
                         "call_id": call["call_id"],
-                        "output": str(output)
+                        "output": out_str
                     })
                 except Exception as e:
                     # Return error output for this function call
@@ -283,10 +295,26 @@ class Dispatcher:
                 except Exception as e:
                     debug_info.append(f"submit_tool_outputs failed: {e}; falling back to create")
                     # Fallback to create-based continuation
-                    updated_messages = [
-                        {"type": "tool_result", "call_id": t.get("call_id"), "output": t.get("output")}
-                        for t in toolouts if t.get("call_id")
-                    ]
+                    updated_messages = []
+                    # Include reasoning items if present to satisfy reasoning model requirements
+                    try:
+                        for item in getattr(raw_resp, 'output', []) or []:
+                            itype = getattr(item, 'type', None)
+                            if itype is None and isinstance(item, dict):
+                                itype = item.get('type')
+                            if itype == 'reasoning':
+                                # Pass through the reasoning block as-is
+                                updated_messages.append(item if isinstance(item, dict) else getattr(item, '__dict__', {}))
+                    except Exception:
+                        pass
+                    # Append function_call_output items
+                    for t in toolouts:
+                        if t.get("call_id") and t.get("output") is not None:
+                            updated_messages.append({
+                                "type": "function_call_output",
+                                "call_id": t["call_id"],
+                                "output": t["output"],
+                            })
                     from .openai_client import ChatOptions
                     continue_options = ChatOptions(
                         model=options.model,
