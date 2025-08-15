@@ -161,7 +161,7 @@ class OpenAIClient:
                                     "source": {"type": "string", "enum": ["user_input", "web"]},
                                     "confidence": {"type": "number"}
                                 },
-                                "required": ["scope", "guild_id", "key", "value", "source"],
+                                "required": ["scope", "guild_id", "channel_id", "user_id", "key", "value", "source"],
                                 "additionalProperties": False
                             }
                         }
@@ -195,7 +195,7 @@ class OpenAIClient:
                                     "confidence": {"type": "number"},
                                     "mem_id": {"type": "string", "description": "Optional idempotency key"}
                                 },
-                                "required": ["scope", "guild_id", "key", "value", "source"],
+                                "required": ["scope", "guild_id", "channel_id", "user_id", "key", "value", "source"],
                                 "additionalProperties": False
                             }
                         }
