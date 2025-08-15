@@ -39,12 +39,11 @@ class FunctionCallHandler:
         memories = []
         for item in items:
             try:
-                # Fill in context information if missing
-                if not item.get("guild_id"):
-                    item["guild_id"] = guild_id
-                if not item.get("channel_id") and item.get("scope") == "channel":
+                # Always override with authoritative IDs from Discord context
+                item["guild_id"] = guild_id
+                if item.get("scope") == "channel":
                     item["channel_id"] = channel_id
-                if not item.get("user_id") and item.get("scope") == "user":
+                if item.get("scope") == "user":
                     item["user_id"] = user_id
                     
                 memory = Memory.from_dict(item)
@@ -74,12 +73,11 @@ class FunctionCallHandler:
         memories = []
         for item in items:
             try:
-                # Fill in context information if missing
-                if not item.get("guild_id"):
-                    item["guild_id"] = guild_id
-                if not item.get("channel_id") and item.get("scope") == "channel":
+                # Always override with authoritative IDs from Discord context
+                item["guild_id"] = guild_id
+                if item.get("scope") == "channel":
                     item["channel_id"] = channel_id
-                if not item.get("user_id") and item.get("scope") == "user":
+                if item.get("scope") == "user":
                     item["user_id"] = user_id
                     
                 memory = Memory.from_dict(item)

@@ -197,8 +197,9 @@ class Dispatcher:
             
             # If we have function outputs, continue the conversation
             if function_outputs:
-                # Add function outputs to messages and continue conversation
-                updated_messages = messages + function_outputs
+                # Continue conversation by sending only the tool outputs for this response
+                # per Responses API: provide function_call_output items referencing call_id.
+                updated_messages = list(function_outputs)
                 
                 # Create new options with previous_response_id to continue conversation
                 from .openai_client import ChatOptions
