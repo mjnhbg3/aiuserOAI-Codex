@@ -1022,8 +1022,8 @@ class GPT5Assistant(commands.Cog):
         else:
             embed.add_field(name="Memory System", value="disabled", inline=True)
         if tools_payload_str:
-            preview = tools_payload_str if len(tools_payload_str) <= 250 else tools_payload_str[:250] + "…"
-            embed.add_field(name="Tools Payload", value=f"```json\n{preview}\n```", inline=False)
+            preview = tools_payload_str if len(tools_payload_str) <= 1000 else tools_payload_str[:1000] + "…"
+            embed.add_field(name="Tools Payload", value=f"```\n{preview}\n```", inline=False)
         # Show code container type if set
         ctype = await self.config.code_container_type()
         if ctype:

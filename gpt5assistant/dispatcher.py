@@ -260,15 +260,11 @@ class Dispatcher:
                 try:
                     await self.memory_manager.initialize()
                     self._memory_initialized = True
-                    print(f"DEBUG: Memory system initialized successfully for guild {message.guild.id}")
                 except Exception as e:
                     # If memory initialization fails, disable memories for this session
                     print(f"Memory system initialization failed: {e}")
                     effective_tools["memories"] = False
                     memory_init_failed = True
-            
-            # Debug: Show whether memories are enabled after initialization
-            print(f"DEBUG: Memory tools enabled: {effective_tools.get('memories', False)} for guild {message.guild.id}")
             
             # Enable file_search for memories if memories tool is enabled AND memories exist
             # This ensures file_search is only used when there are actually memories to retrieve
