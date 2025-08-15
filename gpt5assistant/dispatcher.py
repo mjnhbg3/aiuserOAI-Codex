@@ -143,11 +143,15 @@ class Dispatcher:
                 return result
                 
             memory_function_calls = []
-            for item in raw_resp.output:
-                if hasattr(item, 'type') and item.type == "function_call":
-                    if hasattr(item, 'name') and item.name in ["propose_memories", "save_memories"]:
-                        # Parse arguments if they're a JSON string
-                        raw_args = getattr(item, 'arguments', {})
+            # Primary: top-level function_call items
+            for item in getattr(raw_resp, 'output', []) or []:
+                itype = getattr(item, 'type', None)
+                if isinstance(item, dict):
+                    itype = item.get('type')
+                if itype in ("function_call", "tool_call"):
+                    name = getattr(item, 'name', None) if not isinstance(item, dict) else item.get('name')
+                    if name in ("propose_memories", "save_memories"):
+                        raw_args = getattr(item, 'arguments', {}) if not isinstance(item, dict) else item.get('arguments', {})
                         if isinstance(raw_args, str):
                             try:
                                 parsed_args = json.loads(raw_args)
@@ -155,12 +159,38 @@ class Dispatcher:
                                 parsed_args = {}
                         else:
                             parsed_args = raw_args
-                            
+                        call_id = getattr(item, 'id', None) if not isinstance(item, dict) else item.get('id')
                         memory_function_calls.append({
-                            "call_id": item.id,
-                            "name": item.name,
-                            "arguments": parsed_args
+                            "call_id": call_id,
+                            "name": name,
+                            "arguments": parsed_args,
                         })
+            # Fallback: nested in message content lists
+            if not memory_function_calls:
+                for item in getattr(raw_resp, 'output', []) or []:
+                    content = getattr(item, 'content', None)
+                    if content is None and isinstance(item, dict):
+                        content = item.get('content')
+                    if isinstance(content, list):
+                        for c in content:
+                            ctype = getattr(c, 'type', None) if not isinstance(c, dict) else c.get('type')
+                            if ctype == 'function_call':
+                                name = getattr(c, 'name', None) if not isinstance(c, dict) else c.get('name')
+                                if name in ("propose_memories", "save_memories"):
+                                    raw_args = getattr(c, 'arguments', {}) if not isinstance(c, dict) else c.get('arguments', {})
+                                    if isinstance(raw_args, str):
+                                        try:
+                                            parsed_args = json.loads(raw_args)
+                                        except json.JSONDecodeError:
+                                            parsed_args = {}
+                                    else:
+                                        parsed_args = raw_args
+                                    call_id = getattr(c, 'id', None) if not isinstance(c, dict) else c.get('id')
+                                    memory_function_calls.append({
+                                        "call_id": call_id,
+                                        "name": name,
+                                        "arguments": parsed_args,
+                                    })
             
             if not memory_function_calls:
                 return result
