@@ -987,11 +987,21 @@ class GPT5Assistant(commands.Cog):
         else:
             embed.add_field(name="Vector Store", value="not set", inline=True)
             
-        # Add memory system status
+        # Add memory system status and initialize if needed
         if tools.get("memories"):
             try:
                 dispatcher = await self._ensure_dispatcher()
-                memory_status = "initialized" if dispatcher._memory_initialized else "not initialized"
+                
+                # Initialize memory system for diag if not already done
+                if not dispatcher._memory_initialized:
+                    try:
+                        await dispatcher.memory_manager.initialize()
+                        dispatcher._memory_initialized = True
+                        memory_status = "initialized (just now)"
+                    except Exception as e:
+                        memory_status = f"init failed: {e}"
+                else:
+                    memory_status = "initialized"
                 
                 # Check if memory system is actually working
                 if dispatcher._memory_initialized:
