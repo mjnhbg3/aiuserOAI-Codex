@@ -170,7 +170,9 @@ class Dispatcher:
                 skip_prefixes=prefixes,
                 is_command_message=self._is_command_message,
             )
-            msgs = build_messages(system_prompt, history, content)
+            # Include current user's name in the message
+            current_user_name = message.author.display_name or message.author.name
+            msgs = build_messages(system_prompt, history, content, current_user_name)
             # Collect a limited number of image attachments from recent history
             history_image_limit = int(gconf.get("images_backread", 0) or 0)
             history_image_urls: list[str] = []

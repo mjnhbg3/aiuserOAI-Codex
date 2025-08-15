@@ -6,12 +6,19 @@ import asyncio
 
 
 
-def build_messages(system_prompt: str, history: List[Dict[str, str]], new_user: str) -> List[Dict[str, Any]]:
+def build_messages(system_prompt: str, history: List[Dict[str, str]], new_user: str, current_user_name: str = None) -> List[Dict[str, Any]]:
     # Note: system_prompt is no longer inserted as a system message.
     # We pass the prompt via Responses API 'instructions' only, to avoid duplication.
     msgs: List[Dict[str, Any]] = []
     msgs.extend(history)
-    msgs.append({"role": "user", "content": new_user})
+    
+    # Include username for current user message
+    if current_user_name:
+        user_content = f"{current_user_name}: {new_user}"
+    else:
+        user_content = new_user
+    
+    msgs.append({"role": "user", "content": user_content})
     return msgs
 
 
@@ -109,7 +116,14 @@ async def gather_history(
             text = raw.strip()
             if not text:
                 continue
-            history.append({"role": role, "content": text})
+            
+            # Include username information for user messages
+            if role == "user":
+                display_name = msg.author.display_name or msg.author.name
+                content_with_user = f"{display_name}: {text}"
+                history.append({"role": role, "content": content_with_user})
+            else:
+                history.append({"role": role, "content": text})
     except Exception:
         return []
     # reverse to chronological oldest->newest for the model
