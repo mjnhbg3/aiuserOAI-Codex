@@ -143,7 +143,7 @@ class OpenAIClient:
             arr.append({
                 "type": "function",
                 "name": "propose_memories",
-                "description": "Automatically capture and stage personal information (preferences, interests, traits) mentioned in conversation to build comprehensive user profiles. Use whenever users share personal details, even casually.",
+                "description": "Stage personal information before saving. Use save_memories directly instead unless you need to review or modify the information first.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -175,7 +175,7 @@ class OpenAIClient:
             arr.append({
                 "type": "function",
                 "name": "save_memories",
-                "description": "Save important profile information to long-term memory. Store preferences, personality traits, interests, and background to personalize future interactions.",
+                "description": "Directly save personal information to long-term memory. Use this when users share preferences, traits, interests, or background information. Preferred over propose_memories for simple cases.",
                 "parameters": {
                     "type": "object",
                     "properties": {

@@ -205,7 +205,9 @@ class Dispatcher:
                 
                 # Make follow-up call to get final response
                 final_result = await self.client.respond_collect(updated_messages, continue_options)
-                return final_result
+                
+                # Check if the follow-up response has more memory function calls
+                return await self._process_memory_function_calls(final_result, updated_messages, continue_options, guild_id, channel_id, user_id)
                 
         except Exception as e:
             print(f"Error processing memory function calls: {e}")
