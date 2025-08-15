@@ -114,11 +114,49 @@ class MemoryStorage:
             
         # Generate IDs and timestamps for memories that don't have them
         now = datetime.now(timezone.utc)
+        
+        # Smart deduplication: check for recent similar memories to prevent spam
         for memory in memories:
             if not memory.mem_id:
                 memory.mem_id = memory.generate_id()
             if not memory.updated_at:
                 memory.updated_at = now
+                
+        # Filter out memories that are too similar to recently stored ones (within 5 minutes)
+        filtered_memories = []
+        for memory in memories:
+            should_store = True
+            
+            # Check for recent similar memories
+            try:
+                async with aiosqlite.connect(self._db_path) as db:
+                    async with db.execute('''
+                        SELECT value, updated_at FROM memories 
+                        WHERE guild_id = ? AND scope = ? AND key = ?
+                        AND COALESCE(user_id, '') = COALESCE(?, '')
+                        AND COALESCE(channel_id, '') = COALESCE(?, '')
+                        AND datetime(updated_at) > datetime('now', '-5 minutes')
+                    ''', (
+                        memory.guild_id, memory.scope, memory.key,
+                        memory.user_id, memory.channel_id
+                    )) as cursor:
+                        recent_rows = await cursor.fetchall()
+                        
+                        for existing_value, _ in recent_rows:
+                            # Simple similarity check - if values are very similar, skip
+                            if (existing_value.lower().strip() == memory.value.lower().strip() or
+                                memory.value.lower().strip() in existing_value.lower() or
+                                existing_value.lower() in memory.value.lower().strip()):
+                                should_store = False
+                                break
+            except Exception:
+                # If similarity check fails, store anyway
+                pass
+                
+            if should_store:
+                filtered_memories.append(memory)
+                
+        memories = filtered_memories
         
         async with aiosqlite.connect(self._db_path) as db:
             # Use INSERT OR REPLACE for upsert behavior

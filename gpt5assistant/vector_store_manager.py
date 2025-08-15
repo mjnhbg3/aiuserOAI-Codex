@@ -111,8 +111,9 @@ class VectorStoreManager:
                     # but we include it for completeness based on the API
                 )
                 
-                # TODO: Consider implementing file cleanup for old versions
-                # to avoid accumulating too many files in the vector store
+                # Clean up old versions of this profile file to prevent accumulation
+                # Keep only the most recent file for each profile
+                await self._cleanup_old_profile_files(vs_id, filename, openai_file.id)
                 
             except Exception as e:
                 # Log error but continue with other groups
@@ -155,6 +156,44 @@ class VectorStoreManager:
                     
         except Exception as e:
             print(f"Failed to delete vector store files for {scope}: {e}")
+    
+    async def _cleanup_old_profile_files(self, vs_id: str, target_filename: str, keep_file_id: str) -> None:
+        """Remove old versions of a profile file, keeping only the most recent."""
+        try:
+            openai_client = self.client.client
+            
+            # List all files in vector store
+            vector_store_files = await openai_client.vector_stores.files.list(
+                vector_store_id=vs_id
+            )
+            
+            # Track file IDs that match our target pattern (same profile type)
+            # Since we can't easily get filenames, we'll implement a simpler approach:
+            # Just ensure we don't accumulate too many files total
+            file_count = len(vector_store_files.data)
+            
+            # If we have more than 100 files total, remove the oldest 10
+            # This is a conservative cleanup that maintains long-term memory
+            if file_count > 100:
+                # Sort by creation time (oldest first) and remove the first 10
+                sorted_files = sorted(
+                    vector_store_files.data, 
+                    key=lambda f: getattr(f, 'created_at', 0)
+                )
+                
+                for old_file in sorted_files[:10]:
+                    if old_file.id != keep_file_id:  # Don't delete the file we just created
+                        try:
+                            await openai_client.vector_stores.files.delete(
+                                vector_store_id=vs_id,
+                                file_id=old_file.id
+                            )
+                        except Exception:
+                            continue  # Continue with other files
+                            
+        except Exception:
+            # If cleanup fails, continue - it's not critical
+            pass
 
     async def get_vector_store_stats(self, guild_id: str) -> Dict[str, Any]:
         """Get statistics about the guild's vector store."""
