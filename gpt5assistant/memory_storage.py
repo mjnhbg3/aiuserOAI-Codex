@@ -127,46 +127,65 @@ class MemoryStorage:
             if not memory.updated_at:
                 memory.updated_at = now
                 
-        # Filter out memories that are too similar to recently stored ones
-        filtered_memories = []
+        # Smart consolidation with character limits and recency weighting
+        consolidated_memories = []
         for memory in memories:
-            should_store = True
-            
-            # Check for recent similar memories using configurable window
+            # Check for existing memory with same key to consolidate
             try:
                 # Get similarity window from config (default 5 minutes)
-                similarity_window = await self.config.memories_similarity_window_minutes()
+                similarity_window = await self.config.guild(int(memory.guild_id)).memories_similarity_window_minutes()
                 if similarity_window is None:
                     similarity_window = 5
-                    
+                
                 async with aiosqlite.connect(self._db_path) as db:
+                    # Look for existing memory with exact same key within time window
                     async with db.execute('''
-                        SELECT value, updated_at FROM memories 
+                        SELECT value, updated_at, mem_id FROM memories 
                         WHERE guild_id = ? AND scope = ? AND key = ?
                         AND COALESCE(user_id, '') = COALESCE(?, '')
                         AND COALESCE(channel_id, '') = COALESCE(?, '')
-                        AND datetime(updated_at) > datetime('now', '-{} minutes')
-                    '''.format(similarity_window), (
+                        ORDER BY updated_at DESC LIMIT 1
+                    ''', (
                         memory.guild_id, memory.scope, memory.key,
                         memory.user_id, memory.channel_id
                     )) as cursor:
-                        recent_rows = await cursor.fetchall()
+                        existing_row = await cursor.fetchone()
                         
-                        for existing_value, _ in recent_rows:
-                            # Simple similarity check - if values are very similar, skip
-                            if (existing_value.lower().strip() == memory.value.lower().strip() or
-                                memory.value.lower().strip() in existing_value.lower() or
-                                existing_value.lower() in memory.value.lower().strip()):
-                                should_store = False
-                                break
+                        if existing_row:
+                            existing_value, existing_updated_at, existing_mem_id = existing_row
+                            
+                            # Check if within similarity window for consolidation
+                            existing_time = datetime.fromisoformat(existing_updated_at)
+                            time_diff = (now - existing_time).total_seconds() / 60  # minutes
+                            
+                            if time_diff <= similarity_window:
+                                # Try consolidating if it won't exceed character limit
+                                consolidated_value = self._smart_consolidate(existing_value, memory.value)
+                                
+                                # Get character limit from config (default 400)
+                                try:
+                                    char_limit = await self.config.guild(int(memory.guild_id)).memories_consolidation_char_limit()
+                                    if char_limit is None:
+                                        char_limit = 400
+                                except Exception:
+                                    char_limit = 400
+                                
+                                if len(consolidated_value) <= char_limit:
+                                    # Use existing mem_id and update the memory
+                                    memory.mem_id = existing_mem_id
+                                    memory.value = consolidated_value
+                                    memory.updated_at = now
+                                    consolidated_memories.append(memory)
+                                    continue
+                                # If would exceed limit, fall through to create separate memory
             except Exception:
-                # If similarity check fails, store anyway
+                # If consolidation check fails, store as new memory
                 pass
+            
+            # Store as new memory (either no existing memory or consolidation not possible)
+            consolidated_memories.append(memory)
                 
-            if should_store:
-                filtered_memories.append(memory)
-                
-        memories = filtered_memories
+        memories = consolidated_memories
         
         async with aiosqlite.connect(self._db_path) as db:
             # Use INSERT OR REPLACE for upsert behavior
@@ -190,6 +209,60 @@ class MemoryStorage:
             await db.commit()
             
         return memories
+
+    def _smart_consolidate(self, existing_value: str, new_value: str) -> str:
+        """Smart consolidation of memory values with recency weighting."""
+        existing = existing_value.strip()
+        new = new_value.strip()
+        
+        # If new value completely contains existing, use new value
+        if existing.lower() in new.lower():
+            return new
+            
+        # If existing completely contains new, keep existing but add new details
+        if new.lower() in existing.lower():
+            return existing
+            
+        # Check for obvious duplicates with slight variations
+        existing_clean = existing.lower().replace("my ", "").replace("i am ", "").replace("i'm ", "").strip()
+        new_clean = new.lower().replace("my ", "").replace("i am ", "").replace("i'm ", "").strip()
+        
+        if existing_clean == new_clean:
+            # Prefer the more detailed/formal version
+            return new if len(new) > len(existing) else existing
+        
+        # For different but related information, append with smart formatting
+        if existing.endswith('.') or existing.endswith(','):
+            separator = " "
+        else:
+            separator = ", "
+            
+        # Avoid redundant information
+        combined = f"{existing}{separator}{new}"
+        
+        # Basic deduplication - remove obvious repeats
+        words = combined.split()
+        seen_phrases = set()
+        filtered_words = []
+        
+        i = 0
+        while i < len(words):
+            # Check 2-word phrases for duplicates
+            if i + 1 < len(words):
+                phrase = f"{words[i]} {words[i+1]}".lower()
+                if phrase not in seen_phrases:
+                    seen_phrases.add(phrase)
+                    filtered_words.append(words[i])
+                    if i == len(words) - 2:  # Last pair
+                        filtered_words.append(words[i+1])
+                else:
+                    # Skip duplicate phrase
+                    pass
+            else:
+                filtered_words.append(words[i])
+            i += 1
+            
+        return " ".join(filtered_words)
 
     async def fetch_scope_memories(self, guild_id: str, scope: str, 
                                  user_id: Optional[str] = None, 

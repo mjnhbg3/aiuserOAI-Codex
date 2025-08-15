@@ -56,6 +56,7 @@ class GuildConfig(TypedDict, total=False):
     memories_similarity_window_minutes: int
     memories_vector_store_max_files: int
     memories_vector_store_id_by_guild: Dict[str, str]
+    memories_consolidation_char_limit: int
 
 
 DEFAULT_TOOLS: Dict[str, bool] = {
@@ -110,4 +111,5 @@ DEFAULT_GUILD_CONFIG: GuildConfig = {
     "memories_similarity_window_minutes": 5,  # Separate from backread time for spam prevention
     "memories_vector_store_max_files": 8000,  # Utilize 1GB quota effectively (~800MB)
     "memories_vector_store_id_by_guild": {},
+    "memories_consolidation_char_limit": 400,  # Max characters per consolidated memory
 }

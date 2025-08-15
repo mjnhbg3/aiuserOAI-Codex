@@ -143,7 +143,7 @@ class OpenAIClient:
             arr.append({
                 "type": "function",
                 "name": "propose_memories",
-                "description": "Stage personal information before saving. Use save_memories directly instead unless you need to review or modify the information first.",
+                "description": "Stage personal information before saving. Use save_memories directly instead unless you need to review or modify the information first. Use broad categories to group related information: personal_info (name, age, location, occupation), preferences (favorite color/food/games/music), activities (hobbies, current projects), relationships (friends, family), experiences (stories, past events), plans_goals (future plans), opinions (beliefs, thoughts), or other (unique info).",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -156,7 +156,10 @@ class OpenAIClient:
                                     "guild_id": {"type": "string"},
                                     "channel_id": {"type": "string"},
                                     "user_id": {"type": "string"},
-                                    "key": {"type": "string"},
+                                    "key": {
+                                        "type": "string",
+                                        "description": "Use broad categories: personal_info, preferences, activities, relationships, experiences, plans_goals, opinions, or other"
+                                    },
                                     "value": {"type": "string"},
                                     "source": {"type": "string", "enum": ["user_input", "web"]}
                                 },
@@ -175,7 +178,7 @@ class OpenAIClient:
             arr.append({
                 "type": "function",
                 "name": "save_memories",
-                "description": "Directly save personal information to long-term memory. Use this when users share preferences, traits, interests, or background information. Preferred over propose_memories for simple cases.",
+                "description": "Directly save personal information to long-term memory. Use this when users share preferences, traits, interests, or background information. Preferred over propose_memories for simple cases. Use broad categories to group related information: personal_info (name, age, location, occupation), preferences (favorite color/food/games/music), activities (hobbies, current projects), relationships (friends, family), experiences (stories, past events), plans_goals (future plans), opinions (beliefs, thoughts), or other (unique info).",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -188,7 +191,10 @@ class OpenAIClient:
                                     "guild_id": {"type": "string"},
                                     "channel_id": {"type": "string"},
                                     "user_id": {"type": "string"},
-                                    "key": {"type": "string"},
+                                    "key": {
+                                        "type": "string", 
+                                        "description": "Use broad categories: personal_info, preferences, activities, relationships, experiences, plans_goals, opinions, or other"
+                                    },
                                     "value": {"type": "string"},
                                     "source": {"type": "string", "enum": ["user_input", "web"]}
                                 },
