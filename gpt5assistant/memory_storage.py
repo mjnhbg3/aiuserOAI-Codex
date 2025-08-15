@@ -99,7 +99,7 @@ class MemoryStorage:
                     confidence REAL,
                     mem_id TEXT NOT NULL,
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(guild_id, scope, COALESCE(user_id,''), COALESCE(channel_id,''), key)
+                    UNIQUE(guild_id, scope, user_id, channel_id, key)
                 )
             ''')
             await db.execute('''
