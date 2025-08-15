@@ -647,6 +647,14 @@ class Dispatcher:
                     "If the user asks to describe or edit an image, use the provided input_image parts "
                     "as your source rather than referencing prior response or image IDs."
                 )
+            # If file_search is enabled for memories, instruct the model to use it for retrieving user information
+            if effective_tools.get("file_search") and vector_store_id:
+                sys_prompt_aug = (
+                    f"{sys_prompt_aug}\n\n"
+                    "You have access to a memory system via file_search. When users ask about their preferences, "
+                    "past conversations, or personal information they've shared, use the file_search tool to "
+                    "retrieve relevant memories before responding."
+                )
             # If code interpreter is enabled, politely discourage sandbox links in text
             if effective_tools.get("code_interpreter"):
                 sys_prompt_aug = (
@@ -662,7 +670,7 @@ class Dispatcher:
                 temperature=gconf["temperature"],
                 system_prompt=sys_prompt_aug,
                 file_ids=None,
-                vector_store_id=None,
+                vector_store_id=vector_store_id,
                 inline_file_ids=inline_file_ids or None,
                 inline_image_ids=inline_image_ids or None,
                 inline_image_urls=inline_image_urls or None,
