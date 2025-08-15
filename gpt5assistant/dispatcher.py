@@ -139,7 +139,7 @@ class Dispatcher:
         try:
             # Check if there are memory function calls in the raw response
             raw_resp = result.get("_raw_response")
-            if not raw_resp or not hasattr(raw_resp, 'output'):
+            if not raw_resp:
                 return result
                 
             memory_function_calls = []
@@ -195,6 +195,50 @@ class Dispatcher:
             if not memory_function_calls:
                 return result
                 
+            # If Responses requires action, parse tool_calls list
+            try:
+                req = getattr(raw_resp, 'required_action', None)
+                if req is None and isinstance(raw_resp, dict):
+                    req = raw_resp.get('required_action')
+                rtype = getattr(req, 'type', None) if req is not None else None
+                if rtype is None and isinstance(req, dict):
+                    rtype = req.get('type')
+                if req and rtype == 'submit_tool_outputs':
+                    sto = getattr(req, 'submit_tool_outputs', None)
+                    if sto is None and isinstance(req, dict):
+                        sto = req.get('submit_tool_outputs')
+                    tool_calls = getattr(sto, 'tool_calls', None) if sto is not None else None
+                    if tool_calls is None and isinstance(sto, dict):
+                        tool_calls = sto.get('tool_calls')
+                    if isinstance(tool_calls, list):
+                        for tc in tool_calls:
+                            # SDK shape: {id, type, function: {name, arguments}}
+                            if isinstance(tc, dict):
+                                tcid = tc.get('id')
+                                fn = tc.get('function') or {}
+                                tname = (fn.get('name') if isinstance(fn, dict) else None) or tc.get('name')
+                                targs = (fn.get('arguments') if isinstance(fn, dict) else None) or tc.get('arguments')
+                            else:
+                                tcid = getattr(tc, 'id', None)
+                                fn = getattr(tc, 'function', None)
+                                tname = getattr(fn, 'name', None) if fn else getattr(tc, 'name', None)
+                                targs = getattr(fn, 'arguments', None) if fn else getattr(tc, 'arguments', None)
+                            if tname in ("propose_memories", "save_memories"):
+                                if isinstance(targs, str):
+                                    try:
+                                        parsed_args = json.loads(targs)
+                                    except json.JSONDecodeError:
+                                        parsed_args = {}
+                                else:
+                                    parsed_args = targs or {}
+                                memory_function_calls.append({
+                                    "call_id": tcid,
+                                    "name": tname,
+                                    "arguments": parsed_args,
+                                })
+            except Exception:
+                pass
+
             # Process each memory function call
             function_outputs = []
             for call in memory_function_calls:

@@ -424,7 +424,8 @@ class OpenAIClient:
                     resp = await self.client.responses.get(resp.id)
                     status = getattr(resp, "status", None)
                     _dbg(f"responses.get: status={status}")
-                    if status in {"completed", "failed", "cancelled"}:
+                    # Break out early if tools are required; we'll handle tool submission upstream
+                    if status in {"completed", "failed", "cancelled", "requires_action"}:
                         break
                 except Exception:
                     _dbg("responses.get: exception while polling; stopping early")
