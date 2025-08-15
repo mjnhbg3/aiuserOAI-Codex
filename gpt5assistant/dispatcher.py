@@ -292,10 +292,18 @@ class Dispatcher:
                         tool_outputs=toolouts,
                         debug=False,
                     )
+                    # Add debug info to final result for diag display
+                    if debug_info:
+                        if 'debug' not in final_result:
+                            final_result['debug'] = []
+                        final_result['debug'].extend(debug_info)
+                    
+                    # Check if the follow-up response has more memory function calls
+                    return await self._process_memory_function_calls(final_result, messages, options, guild_id, channel_id, user_id)
                 except Exception as e:
                     debug_info.append(f"submit_tool_outputs failed: {e}; falling back to create")
                     # Fallback to create-based continuation
-                    updated_messages = []
+                    updated_messages = list(messages)  # Start with original conversation
                     # Include reasoning items if present to satisfy reasoning model requirements
                     try:
                         for item in getattr(raw_resp, 'output', []) or []:
@@ -332,15 +340,15 @@ class Dispatcher:
                         previous_response_id=getattr(raw_resp, 'id', None)
                     )
                     final_result = await self.client.respond_collect(updated_messages, continue_options)
-                
-                # Add debug info to final result for diag display
-                if debug_info:
-                    if 'debug' not in final_result:
-                        final_result['debug'] = []
-                    final_result['debug'].extend(debug_info)
-                
-                # Check if the follow-up response has more memory function calls
-                return await self._process_memory_function_calls(final_result, updated_messages, continue_options, guild_id, channel_id, user_id)
+                    
+                    # Add debug info to final result for diag display
+                    if debug_info:
+                        if 'debug' not in final_result:
+                            final_result['debug'] = []
+                        final_result['debug'].extend(debug_info)
+                    
+                    # Check if the follow-up response has more memory function calls
+                    return await self._process_memory_function_calls(final_result, messages, continue_options, guild_id, channel_id, user_id)
                 
         except Exception as e:
             debug_info.append(f"Error processing memory function calls: {e}")

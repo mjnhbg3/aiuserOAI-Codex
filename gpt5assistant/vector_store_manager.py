@@ -16,19 +16,41 @@ class VectorStoreManager:
         self.storage = memory_storage
         self.config = config
         self._vector_store_cache: Dict[str, str] = {}
+    
+    async def _verify_vector_store_exists(self, vs_id: str) -> bool:
+        """Verify that a vector store still exists on OpenAI's servers."""
+        try:
+            openai_client = self.client.client
+            await openai_client.vector_stores.retrieve(vs_id)
+            return True
+        except Exception:
+            # Vector store doesn't exist or is inaccessible
+            return False
         
     async def ensure_vector_store(self, guild_id: str) -> str:
         """Ensure vector store exists for guild. Returns vector store ID."""
         # Check cache first
         if guild_id in self._vector_store_cache:
-            return self._vector_store_cache[guild_id]
+            vs_id = self._vector_store_cache[guild_id]
+            # Verify the cached vector store still exists
+            if await self._verify_vector_store_exists(vs_id):
+                return vs_id
+            else:
+                # Remove invalid cached ID
+                del self._vector_store_cache[guild_id]
             
         # Check config for existing vector store ID
         guild_stores = await self.config.memories_vector_store_id_by_guild()
         if guild_id in guild_stores:
             vs_id = guild_stores[guild_id]
-            self._vector_store_cache[guild_id] = vs_id
-            return vs_id
+            # Verify the stored vector store still exists
+            if await self._verify_vector_store_exists(vs_id):
+                self._vector_store_cache[guild_id] = vs_id
+                return vs_id
+            else:
+                # Remove invalid stored ID
+                del guild_stores[guild_id]
+                await self.config.memories_vector_store_id_by_guild.set(guild_stores)
             
         # Create new vector store
         vs_name = f"vs_guild_{guild_id}"
