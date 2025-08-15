@@ -52,7 +52,7 @@ class VectorStoreManager:
     
     async def _create_vector_store(self, name: str) -> Dict[str, Any]:
         """Create a new vector store using OpenAI API."""
-        # Use the existing OpenAI client to create vector store
+        # Use the existing OpenAI client to create vector store; fallback to direct HTTP with Beta header
         openai_client = self.client.client
         
         try:
@@ -70,13 +70,36 @@ class VectorStoreManager:
                 "status": vector_store.status
             }
         except Exception as e:
-            # If vector store creation fails, return error info
-            return {
-                "id": None,
-                "name": name,
-                "status": "error",
-                "error": str(e)
-            }
+            # Fallback: direct HTTP call with proper Beta header
+            try:
+                import httpx
+                base_url = getattr(self.client, "_base_url", "https://api.openai.com/v1")
+                api_key = getattr(self.client, "_api_key", None)
+                if not api_key:
+                    raise RuntimeError("Missing API key for vector store creation")
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "OpenAI-Beta": "assistants=v2",
+                }
+                async with httpx.AsyncClient(timeout=30) as http:
+                    r = await http.post(f"{base_url}/vector_stores", headers=headers, json={"name": name})
+                    if r.status_code != 200:
+                        raise RuntimeError(f"HTTP {r.status_code}: {r.text}")
+                    data = r.json()
+                    return {
+                        "id": data.get("id"),
+                        "name": data.get("name"),
+                        "status": data.get("status", "completed"),
+                    }
+            except Exception as e2:
+                # If vector store creation fails, return error info
+                return {
+                    "id": None,
+                    "name": name,
+                    "status": "error",
+                    "error": f"{e} | fallback: {e2}"
+                }
     
     async def update_vector_store_profiles(self, guild_id: str, scope_groups: List[ScopeGroup]) -> None:
         """Update vector store with new profile files for the given scope groups."""
@@ -106,12 +129,30 @@ class VectorStoreManager:
                 
                 # Add file to vector store with metadata
                 metadata = group.get_metadata()
-                await openai_client.vector_stores.files.create(
-                    vector_store_id=vs_id,
-                    file_id=openai_file.id,
-                    # Note: metadata/attributes might not be supported in all OpenAI deployments
-                    # but we include it for completeness based on the API
-                )
+                try:
+                    await openai_client.vector_stores.files.create(
+                        vector_store_id=vs_id,
+                        file_id=openai_file.id,
+                    )
+                except Exception:
+                    # Fallback via HTTP
+                    try:
+                        import httpx
+                        base_url = getattr(self.client, "_base_url", "https://api.openai.com/v1")
+                        api_key = getattr(self.client, "_api_key", None)
+                        headers = {
+                            "Authorization": f"Bearer {api_key}",
+                            "Content-Type": "application/json",
+                            "OpenAI-Beta": "assistants=v2",
+                        }
+                        async with httpx.AsyncClient(timeout=30) as http:
+                            await http.post(
+                                f"{base_url}/vector_stores/{vs_id}/files",
+                                headers=headers,
+                                json={"file_id": openai_file.id}
+                            )
+                    except Exception:
+                        raise
                 
                 # Clean up old versions of this profile file to prevent accumulation
                 # Keep only the most recent file for each profile
