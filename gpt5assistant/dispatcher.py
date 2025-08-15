@@ -135,6 +135,7 @@ class Dispatcher:
 
     async def _process_memory_function_calls(self, result: dict, messages: list, options, guild_id: str, channel_id: str, user_id: str) -> dict:
         """Process memory function calls and continue conversation if needed."""
+        debug_info = []
         try:
             # Check if there are memory function calls in the raw response
             raw_resp = result.get("_raw_response")
@@ -169,7 +170,7 @@ class Dispatcher:
             for call in memory_function_calls:
                 try:
                     # Execute the memory function
-                    print(f"DEBUG: Executing {call['name']} with args: {call['arguments']}")
+                    debug_info.append(f"Executing {call['name']} with args: {call['arguments']}")
                     output = await self.function_handler.handle_function_call(
                         call["name"], 
                         call["arguments"], 
@@ -177,7 +178,7 @@ class Dispatcher:
                         channel_id, 
                         user_id
                     )
-                    print(f"DEBUG: Function output: {output}")
+                    debug_info.append(f"Function output: {output}")
                     
                     # Format function output for Responses API
                     function_outputs.append({
@@ -187,6 +188,7 @@ class Dispatcher:
                     })
                 except Exception as e:
                     # Return error output for this function call
+                    debug_info.append(f"Error executing {call['name']}: {str(e)}")
                     function_outputs.append({
                         "type": "function_call_output", 
                         "call_id": call["call_id"],
@@ -217,13 +219,26 @@ class Dispatcher:
                 )
                 
                 # Make follow-up call to get final response
+                debug_info.append("Making follow-up call to continue conversation")
                 final_result = await self.client.respond_collect(updated_messages, continue_options)
+                
+                # Add debug info to final result for diag display
+                if debug_info:
+                    if 'debug' not in final_result:
+                        final_result['debug'] = []
+                    final_result['debug'].extend(debug_info)
                 
                 # Check if the follow-up response has more memory function calls
                 return await self._process_memory_function_calls(final_result, updated_messages, continue_options, guild_id, channel_id, user_id)
                 
         except Exception as e:
-            print(f"Error processing memory function calls: {e}")
+            debug_info.append(f"Error processing memory function calls: {e}")
+            
+        # Add debug info to result for diag display
+        if debug_info:
+            if 'debug' not in result:
+                result['debug'] = []
+            result['debug'].extend(debug_info)
             
         return result
 
