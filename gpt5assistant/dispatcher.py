@@ -250,21 +250,37 @@ class Dispatcher:
                             break
                 except Exception:
                     history_image_urls = []
-            # Initialize memory system if needed
-            if not self._memory_initialized:
-                await self.memory_manager.initialize()
-                self._memory_initialized = True
-            
             # Determine vector store availability
             vector_store_id = gconf.get("file_kb_id") or None
             effective_tools = dict(gconf["tools"])  # shallow copy
             
-            # Enable file_search for memories if memories are enabled
-            if effective_tools.get("memories") and gconf.get("memories_enabled", True):
-                memory_vector_store_id = await self.memory_manager.get_vector_store_id(str(message.guild.id))
-                if memory_vector_store_id:
-                    effective_tools["file_search"] = True
-                    vector_store_id = memory_vector_store_id
+            # Initialize memory system if needed
+            memory_init_failed = False
+            if not self._memory_initialized and effective_tools.get("memories"):
+                try:
+                    await self.memory_manager.initialize()
+                    self._memory_initialized = True
+                except Exception as e:
+                    # If memory initialization fails, disable memories for this session
+                    print(f"Memory system initialization failed: {e}")
+                    effective_tools["memories"] = False
+                    memory_init_failed = True
+            
+            # Enable file_search for memories if memories tool is enabled AND memories exist
+            # This ensures file_search is only used when there are actually memories to retrieve
+            if effective_tools.get("memories") and gconf.get("memories_enabled", True) and not memory_init_failed:
+                try:
+                    memory_vector_store_id = await self.memory_manager.get_vector_store_id(str(message.guild.id))
+                    if memory_vector_store_id:
+                        # Check if there are any memories in the database before enabling file_search
+                        stats = await self.memory_manager.storage.get_guild_stats(str(message.guild.id))
+                        if stats.get("total", 0) > 0:
+                            effective_tools["file_search"] = True
+                            vector_store_id = memory_vector_store_id
+                        # If no memories exist, don't enable file_search to avoid unnecessary API calls
+                except Exception:
+                    # If memory operations fail, continue without memories
+                    effective_tools["memories"] = False
             elif effective_tools.get("file_search"):
                 # Do not use vector stores for files; only read current attachments
                 effective_tools["file_search"] = False

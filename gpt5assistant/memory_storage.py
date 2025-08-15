@@ -7,7 +7,11 @@ import json
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, asdict
-import aiosqlite
+
+try:
+    import aiosqlite
+except ImportError:
+    aiosqlite = None
 
 from redbot.core import Config
 
@@ -63,9 +67,19 @@ class MemoryStorage:
         
     async def initialize(self):
         """Initialize the database."""
-        # Get the data path from Red's config system
-        data_manager = await self.config.get_raw("data_manager", default={})
-        self._db_path = data_manager.get("memories_db_path", "memories.db")
+        if aiosqlite is None:
+            raise RuntimeError("aiosqlite is required for memory storage. Please install it with: pip install aiosqlite")
+            
+        # Use Red's data directory for storing the database
+        from redbot.core.data_manager import cog_data_path
+        try:
+            data_dir = cog_data_path(cog_instance=None)  # Get base data directory
+            self._db_path = str(data_dir / "gpt5assistant" / "memories.db")
+            # Ensure directory exists
+            (data_dir / "gpt5assistant").mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # Fallback to current directory if data manager fails
+            self._db_path = "memories.db"
         
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute('''
