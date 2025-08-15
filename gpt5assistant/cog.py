@@ -23,6 +23,8 @@ class GPT5Assistant(commands.Cog):
             diag_plain="Diagnostic ping: reply with the single word PONG.",
             diag_tools="What is one major headline today? Provide a short sentence.",
             code_container_type="auto",
+            # Global map of guild_id -> vector_store_id for long-term memories
+            memories_vector_store_id_by_guild={},
         )
         # Per-channel cutoff for forget
         self.config.register_channel(forget_after_ts=0)

@@ -36,15 +36,17 @@ class VectorStoreManager:
         try:
             # Create vector store via OpenAI API
             vector_store = await self._create_vector_store(vs_name)
-            vs_id = vector_store["id"]
-            
+            vs_id = vector_store.get("id")
+            if not vs_id:
+                raise RuntimeError(vector_store.get("error", "unknown error creating vector store"))
+
             # Cache and persist the ID
             self._vector_store_cache[guild_id] = vs_id
             guild_stores[guild_id] = vs_id
             await self.config.memories_vector_store_id_by_guild.set(guild_stores)
-            
+
             return vs_id
-            
+
         except Exception as e:
             raise RuntimeError(f"Failed to create vector store for guild {guild_id}: {e}")
     
@@ -292,30 +294,32 @@ class MemoryManager:
         if len(memories) > max_items:
             memories = memories[:max_items]
             
+        # 1. Upsert to database (do not lose writes if vector store update fails)
         try:
-            # 1. Upsert to database
             saved_memories = await self.storage.bulk_upsert(memories)
-            
-            # 2. Group by scope for vector store updates
-            scope_groups = group_by_scope(saved_memories)
-            
-            # 3. Update vector store profiles
-            if scope_groups:
+        except Exception as e:
+            return {"status": "error", "error": f"DB upsert failed: {e}", "saved": 0}
+
+        # 2. Group by scope for vector store updates
+        scope_groups = group_by_scope(saved_memories)
+
+        # 3. Update vector store profiles (best-effort)
+        vs_error: Optional[str] = None
+        if scope_groups:
+            try:
                 guild_id = scope_groups[0].guild_id
                 await self.vector_manager.update_vector_store_profiles(guild_id, scope_groups)
-            
-            return {
-                "status": "ok",
-                "saved": len(saved_memories),
-                "groups_updated": len(scope_groups)
-            }
-            
-        except Exception as e:
-            return {
-                "status": "error",
-                "error": str(e),
-                "saved": 0
-            }
+            except Exception as e:
+                vs_error = str(e)
+
+        result: Dict[str, Any] = {
+            "status": "ok" if vs_error is None else "partial",
+            "saved": len(saved_memories),
+            "groups_updated": len(scope_groups) if vs_error is None else 0,
+        }
+        if vs_error is not None:
+            result["vector_store_error"] = vs_error
+        return result
     
     async def get_vector_store_id(self, guild_id: str) -> Optional[str]:
         """Get the vector store ID for a guild."""

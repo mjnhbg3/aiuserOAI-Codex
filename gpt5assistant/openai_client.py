@@ -219,6 +219,11 @@ class OpenAIClient:
         files_added = False
         inline_files_added = False
         for m in messages:
+            # Pass through function/tool outputs directly at top-level input
+            if isinstance(m, dict) and m.get("type") in {"function_call_output", "tool_result"}:
+                formatted.append(m)
+                continue
+
             role = m.get("role", "user")
             content = m.get("content", "")
             parts: List[Dict[str, Any]]
