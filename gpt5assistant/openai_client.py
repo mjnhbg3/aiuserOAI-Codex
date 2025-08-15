@@ -1328,6 +1328,109 @@ class OpenAIClient:
         return result
 
     @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
+    async def submit_tool_outputs(self, *, previous_response_id: str, tool_outputs: List[Dict[str, Any]], debug: bool = False) -> Dict[str, Any]:
+        """Submit tool outputs (function results) to continue a Responses conversation.
+
+        Prefer the native submit_tool_outputs endpoint; fall back to create+previous_response_id if not available.
+        """
+        dbg: List[str] = []
+        def _dbg(msg: str) -> None:
+            if debug:
+                dbg.append(msg)
+
+        # Normalize to SDK format: {tool_call_id, output}
+        sdk_tool_outputs: List[Dict[str, str]] = []
+        for t in tool_outputs:
+            call_id = t.get("call_id") if isinstance(t, dict) else None
+            out = t.get("output") if isinstance(t, dict) else None
+            if isinstance(call_id, str) and isinstance(out, str):
+                sdk_tool_outputs.append({"tool_call_id": call_id, "output": out})
+
+        resp = None
+        # Primary: submit_tool_outputs endpoint
+        try:
+            if hasattr(self.client.responses, "submit_tool_outputs"):
+                _dbg("submit_tool_outputs: calling SDK endpoint")
+                resp = await self.client.responses.submit_tool_outputs(
+                    response_id=previous_response_id,
+                    tool_outputs=sdk_tool_outputs,
+                )
+        except Exception:
+            resp = None
+
+        # Fallback: responses.create with previous_response_id + tool_result items
+        if resp is None:
+            _dbg("submit_tool_outputs: falling back to responses.create")
+            try:
+                items = [
+                    {"type": "tool_result", "call_id": t.get("tool_call_id") or t.get("call_id"), "output": t.get("output")}
+                    for t in (sdk_tool_outputs or tool_outputs)
+                    if (isinstance(t, dict) and (t.get("tool_call_id") or t.get("call_id")) and t.get("output"))
+                ]
+            except Exception:
+                items = []
+            resp = await self.client.responses.create(
+                model="gpt-5",  # model is ignored when previous_response_id is supplied
+                previous_response_id=previous_response_id,
+                input=items,
+            )
+
+        # Poll until completion if still running
+        status = getattr(resp, "status", None)
+        _dbg(f"submit_tool_outputs: status={status}")
+        if status not in {"completed", "failed", "cancelled"}:
+            deadline = time.monotonic() + 170.0
+            while time.monotonic() < deadline:
+                await asyncio.sleep(0.75)
+                try:
+                    resp = await self.client.responses.get(resp.id)
+                    status = getattr(resp, "status", None)
+                    _dbg(f"responses.get: status={status}")
+                    if status in {"completed", "failed", "cancelled"}:
+                        break
+                except Exception:
+                    _dbg("responses.get: exception while polling; stopping early")
+                    break
+
+        # Extract final text
+        text = None
+        try:
+            ot = getattr(resp, "output_text", None)
+            if isinstance(ot, str) and ot.strip():
+                text = ot
+        except Exception:
+            text = None
+        if not text:
+            try:
+                parts: list[str] = []
+                out = getattr(resp, "output", None)
+                if isinstance(out, list):
+                    for msg in out:
+                        content = getattr(msg, "content", None)
+                        if content is None and isinstance(msg, dict):
+                            content = msg.get("content")
+                        if not isinstance(content, list):
+                            continue
+                        for c in content:
+                            ctype = getattr(c, "type", None)
+                            if ctype is None and isinstance(c, dict):
+                                ctype = c.get("type")
+                            if ctype == "output_text":
+                                txt = getattr(c, "text", None)
+                                if txt is None and isinstance(c, dict):
+                                    txt = c.get("text")
+                                if txt:
+                                    parts.append(txt)
+                text = "".join(parts)
+            except Exception:
+                text = ""
+
+        result: Dict[str, Any] = {"text": text or "", "images": [], "image_names": [], "files": [], "_raw_response": resp, "response_id": getattr(resp, "id", None)}
+        if debug:
+            result["debug"] = dbg
+        return result
+
+    @retry(wait=wait_exponential(multiplier=1, min=1, max=8), stop=stop_after_attempt(4))
     async def generate_image(
         self, prompt: str, *, size: str = "1024x1024", seed: Optional[int] = None
     ) -> bytes:

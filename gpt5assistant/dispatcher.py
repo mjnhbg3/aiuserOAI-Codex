@@ -212,7 +212,7 @@ class Dispatcher:
                     
                     # Format function output for Responses API
                     function_outputs.append({
-                        "type": "function_call_output",
+                        "type": "tool_result",
                         "call_id": call["call_id"],
                         "output": str(output)
                     })
@@ -220,38 +220,46 @@ class Dispatcher:
                     # Return error output for this function call
                     debug_info.append(f"Error executing {call['name']}: {str(e)}")
                     function_outputs.append({
-                        "type": "function_call_output", 
+                        "type": "tool_result", 
                         "call_id": call["call_id"],
                         "output": f"Error: {str(e)}"
                     })
             
             # If we have function outputs, continue the conversation
             if function_outputs:
-                # Continue conversation by sending only the tool outputs for this response
-                # per Responses API: provide function_call_output items referencing call_id.
-                updated_messages = list(function_outputs)
-                
-                # Create new options with previous_response_id to continue conversation
-                from .openai_client import ChatOptions
-                continue_options = ChatOptions(
-                    model=options.model,
-                    tools=options.tools,
-                    reasoning=options.reasoning,
-                    max_tokens=options.max_tokens,
-                    temperature=options.temperature,
-                    system_prompt=options.system_prompt,
-                    file_ids=options.file_ids,
-                    vector_store_id=options.vector_store_id,
-                    inline_file_ids=options.inline_file_ids,
-                    inline_image_ids=options.inline_image_ids,
-                    inline_image_urls=options.inline_image_urls,
-                    code_container_type=options.code_container_type,
-                    previous_response_id=raw_resp.id  # Continue conversation
-                )
-                
-                # Make follow-up call to get final response
-                debug_info.append("Making follow-up call to continue conversation")
-                final_result = await self.client.respond_collect(updated_messages, continue_options)
+                # Submit tool outputs using the native endpoint if available
+                toolouts = [{"call_id": f.get("call_id"), "output": f.get("output", "")} for f in function_outputs]
+                debug_info.append(f"Submitting tool outputs: {len(toolouts)}")
+                try:
+                    final_result = await self.client.submit_tool_outputs(
+                        previous_response_id=getattr(raw_resp, 'id', None),
+                        tool_outputs=toolouts,
+                        debug=False,
+                    )
+                except Exception as e:
+                    debug_info.append(f"submit_tool_outputs failed: {e}; falling back to create")
+                    # Fallback to create-based continuation
+                    updated_messages = [
+                        {"type": "tool_result", "call_id": t.get("call_id"), "output": t.get("output")}
+                        for t in toolouts if t.get("call_id")
+                    ]
+                    from .openai_client import ChatOptions
+                    continue_options = ChatOptions(
+                        model=options.model,
+                        tools=options.tools,
+                        reasoning=options.reasoning,
+                        max_tokens=options.max_tokens,
+                        temperature=options.temperature,
+                        system_prompt=options.system_prompt,
+                        file_ids=options.file_ids,
+                        vector_store_id=options.vector_store_id,
+                        inline_file_ids=options.inline_file_ids,
+                        inline_image_ids=options.inline_image_ids,
+                        inline_image_urls=options.inline_image_urls,
+                        code_container_type=options.code_container_type,
+                        previous_response_id=getattr(raw_resp, 'id', None)
+                    )
+                    final_result = await self.client.respond_collect(updated_messages, continue_options)
                 
                 # Add debug info to final result for diag display
                 if debug_info:
