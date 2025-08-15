@@ -949,6 +949,10 @@ class GPT5Assistant(commands.Cog):
                 payload.append({"type": "function", "name": "request_python", "note": "sentinel function used in first call"})
             if eff_tools.get("image"):
                 payload.append({"type": "image_generation"})
+            if eff_tools.get("memories"):
+                # Note: In actual chat, memory tools are added via client._tools_array
+                payload.append({"type": "function", "name": "propose_memories", "note": "memory staging function"})
+                payload.append({"type": "function", "name": "save_memories", "note": "memory commit function"})
             tools_payload_str = str(payload)
 
             # Use the client path and collect final output including images
