@@ -271,8 +271,11 @@ class MemoryManager:
             if memory.scope == "channel" and not memory.channel_id:
                 continue
                 
-            # Apply confidence filtering if configured
-            min_confidence = await self.config.memories_confidence_min()
+            # Apply confidence filtering if configured (guild-scoped)
+            try:
+                min_confidence = await self.config.guild(int(memory.guild_id)).memories_confidence_min()
+            except Exception:
+                min_confidence = 0.4
             if memory.confidence is not None and memory.confidence < min_confidence:
                 continue
                 
@@ -285,12 +288,25 @@ class MemoryManager:
         if not memories:
             return {"status": "ok", "saved": 0}
             
-        # Check if memories are enabled
-        if not await self.config.memories_enabled():
+        # Determine guild (assume all items are same guild)
+        gid = None
+        try:
+            gid = str(memories[0].guild_id)
+        except Exception:
+            pass
+        # Check if memories are enabled (guild-scoped)
+        try:
+            enabled = await self.config.guild(int(gid)).memories_enabled()
+        except Exception:
+            enabled = True
+        if not enabled:
             return {"status": "disabled", "saved": 0}
             
         # Check item count limit
-        max_items = await self.config.memories_max_items_per_call()
+        try:
+            max_items = await self.config.guild(int(gid)).memories_max_items_per_call()
+        except Exception:
+            max_items = 50
         if len(memories) > max_items:
             memories = memories[:max_items]
             
