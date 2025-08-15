@@ -365,6 +365,33 @@ class GPT5Assistant(commands.Cog):
         await self.config.guild(ctx.guild).memories_confidence_min.set(confidence)
         await ctx.send(f"Minimum confidence threshold set to {confidence}.")
 
+    @gpt5_config_memory.command(name="similarity_window")
+    @checks.admin_or_permissions(manage_guild=True)
+    async def gpt5_config_memory_similarity_window(self, ctx: commands.Context, minutes: int) -> None:
+        """Set similarity window for duplicate detection in minutes (default: 5).
+        
+        This is separate from backread time and prevents duplicate memories within the specified timeframe.
+        Common values: 5 (default), 15 (medium), 30 (long)
+        """
+        minutes = max(1, min(60, minutes))  # Limit to 1-60 minutes
+        await self.config.guild(ctx.guild).memories_similarity_window_minutes.set(minutes)
+        await ctx.send(f"Memory similarity window set to {minutes} minutes.")
+
+    @gpt5_config_memory.command(name="vector_limit")
+    @checks.admin_or_permissions(manage_guild=True)
+    async def gpt5_config_memory_vector_limit(self, ctx: commands.Context, max_files: int) -> None:
+        """Set maximum files in vector store (default: 8000).
+        
+        Higher values use more of your 1GB quota but provide longer memory retention.
+        Examples: 2000 (~200MB), 5000 (~500MB), 8000 (~800MB), 10000 (full 1GB)
+        """
+        max_files = max(100, min(15000, max_files))  # Reasonable bounds
+        await self.config.guild(ctx.guild).memories_vector_store_max_files.set(max_files)
+        
+        # Calculate approximate storage usage
+        approx_mb = (max_files * 10) // 1024  # Rough estimate at 10KB per file
+        await ctx.send(f"Vector store file limit set to {max_files} files (~{approx_mb}MB).")
+
     @gpt5_config_memory.command(name="show")
     async def gpt5_config_memory_show(self, ctx: commands.Context, scope: str = "user", target: str = None) -> None:
         """Show memories for a user or channel. Usage: [p]gpt5 config memory show user @user OR channel #channel"""
@@ -535,21 +562,26 @@ class GPT5Assistant(commands.Cog):
                 inline=True
             )
         else:
+            file_count = vs_stats.get('file_count', 0)
+            max_files = config.get('memories_vector_store_max_files', 8000)
+            usage_pct = (file_count / max_files * 100) if max_files > 0 else 0
+            
             embed.add_field(
                 name="🔍 Vector Store",
-                value=f"Files: {vs_stats.get('file_count', 0)}\n"
+                value=f"Files: {file_count}/{max_files} ({usage_pct:.1f}%)\n"
                       f"Status: {vs_stats.get('status', 'unknown')}\n"
                       f"Usage: {vs_stats.get('usage_bytes', 0)} bytes",
                 inline=True
             )
         
         # Configuration
-        config = await self.config.guild(ctx.guild).all()
         embed.add_field(
             name="⚙️ Configuration",
             value=f"Enabled: {config.get('memories_enabled', True)}\n"
                   f"Max items/call: {config.get('memories_max_items_per_call', 50)}\n"
-                  f"Min confidence: {config.get('memories_confidence_min', 0.4)}",
+                  f"Min confidence: {config.get('memories_confidence_min', 0.4)}\n"
+                  f"Similarity window: {config.get('memories_similarity_window_minutes', 5)}min\n"
+                  f"Vector limit: {config.get('memories_vector_store_max_files', 8000)} files",
             inline=True
         )
         

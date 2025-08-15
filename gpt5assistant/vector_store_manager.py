@@ -58,7 +58,7 @@ class VectorStoreManager:
                 name=name,
                 expires_after={
                     "anchor": "last_active_at",
-                    "days": 365  # Keep for 1 year after last use
+                    "days": 730  # Keep for 2 years after last use (true long-term memory)
                 }
             )
             
@@ -167,21 +167,30 @@ class VectorStoreManager:
                 vector_store_id=vs_id
             )
             
-            # Track file IDs that match our target pattern (same profile type)
-            # Since we can't easily get filenames, we'll implement a simpler approach:
-            # Just ensure we don't accumulate too many files total
+            # Implement proper long-term storage limits utilizing the 1GB quota
             file_count = len(vector_store_files.data)
             
-            # If we have more than 100 files total, remove the oldest 10
-            # This is a conservative cleanup that maintains long-term memory
-            if file_count > 100:
-                # Sort by creation time (oldest first) and remove the first 10
+            # Get configurable limits for long-term memory
+            try:
+                max_files = await self.config.memories_vector_store_max_files()
+                if max_files is None:
+                    max_files = 8000  # Default for 1GB quota
+            except Exception:
+                max_files = 8000
+                
+            cleanup_batch_size = max(50, max_files // 20)  # Remove 5% when limit reached
+            
+            if file_count > max_files:
+                # Sort by creation time (oldest first) and remove 5% of files
                 sorted_files = sorted(
                     vector_store_files.data, 
                     key=lambda f: getattr(f, 'created_at', 0)
                 )
                 
-                for old_file in sorted_files[:10]:
+                # Remove oldest 5% to maintain long-term memory while staying within limits
+                files_to_remove = sorted_files[:cleanup_batch_size]
+                
+                for old_file in files_to_remove:
                     if old_file.id != keep_file_id:  # Don't delete the file we just created
                         try:
                             await openai_client.vector_stores.files.delete(

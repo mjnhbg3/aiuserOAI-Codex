@@ -53,6 +53,8 @@ class GuildConfig(TypedDict, total=False):
     memories_max_items_per_call: int
     memories_max_profile_kb: int
     memories_confidence_min: float
+    memories_similarity_window_minutes: int
+    memories_vector_store_max_files: int
     memories_vector_store_id_by_guild: Dict[str, str]
 
 
@@ -105,5 +107,7 @@ DEFAULT_GUILD_CONFIG: GuildConfig = {
     "memories_max_items_per_call": 50,
     "memories_max_profile_kb": 10,
     "memories_confidence_min": 0.4,
+    "memories_similarity_window_minutes": 5,  # Separate from backread time for spam prevention
+    "memories_vector_store_max_files": 8000,  # Utilize 1GB quota effectively (~800MB)
     "memories_vector_store_id_by_guild": {},
 }

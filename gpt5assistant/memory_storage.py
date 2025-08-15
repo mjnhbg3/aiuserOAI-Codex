@@ -122,21 +122,26 @@ class MemoryStorage:
             if not memory.updated_at:
                 memory.updated_at = now
                 
-        # Filter out memories that are too similar to recently stored ones (within 5 minutes)
+        # Filter out memories that are too similar to recently stored ones
         filtered_memories = []
         for memory in memories:
             should_store = True
             
-            # Check for recent similar memories
+            # Check for recent similar memories using configurable window
             try:
+                # Get similarity window from config (default 5 minutes)
+                similarity_window = await self.config.memories_similarity_window_minutes()
+                if similarity_window is None:
+                    similarity_window = 5
+                    
                 async with aiosqlite.connect(self._db_path) as db:
                     async with db.execute('''
                         SELECT value, updated_at FROM memories 
                         WHERE guild_id = ? AND scope = ? AND key = ?
                         AND COALESCE(user_id, '') = COALESCE(?, '')
                         AND COALESCE(channel_id, '') = COALESCE(?, '')
-                        AND datetime(updated_at) > datetime('now', '-5 minutes')
-                    ''', (
+                        AND datetime(updated_at) > datetime('now', '-{} minutes')
+                    '''.format(similarity_window), (
                         memory.guild_id, memory.scope, memory.key,
                         memory.user_id, memory.channel_id
                     )) as cursor:
