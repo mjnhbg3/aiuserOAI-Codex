@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Dict, List, Optional
 from io import BytesIO
 import random
@@ -144,10 +145,20 @@ class Dispatcher:
             for item in raw_resp.output:
                 if hasattr(item, 'type') and item.type == "function_call":
                     if hasattr(item, 'name') and item.name in ["propose_memories", "save_memories"]:
+                        # Parse arguments if they're a JSON string
+                        raw_args = getattr(item, 'arguments', {})
+                        if isinstance(raw_args, str):
+                            try:
+                                parsed_args = json.loads(raw_args)
+                            except json.JSONDecodeError:
+                                parsed_args = {}
+                        else:
+                            parsed_args = raw_args
+                            
                         memory_function_calls.append({
                             "call_id": item.id,
                             "name": item.name,
-                            "arguments": getattr(item, 'arguments', {})
+                            "arguments": parsed_args
                         })
             
             if not memory_function_calls:
@@ -158,6 +169,7 @@ class Dispatcher:
             for call in memory_function_calls:
                 try:
                     # Execute the memory function
+                    print(f"DEBUG: Executing {call['name']} with args: {call['arguments']}")
                     output = await self.function_handler.handle_function_call(
                         call["name"], 
                         call["arguments"], 
@@ -165,6 +177,7 @@ class Dispatcher:
                         channel_id, 
                         user_id
                     )
+                    print(f"DEBUG: Function output: {output}")
                     
                     # Format function output for Responses API
                     function_outputs.append({
