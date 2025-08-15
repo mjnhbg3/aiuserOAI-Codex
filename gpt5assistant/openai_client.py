@@ -143,7 +143,7 @@ class OpenAIClient:
             arr.append({
                 "type": "function",
                 "name": "propose_memories",
-                "description": "Stage candidate memories (no write). Return items for possible revision/augmentation.",
+                "description": "Capture personal preferences, interests, traits, and context from natural conversation to build user profiles. Use when users mention likes/dislikes, personal facts, or notable behaviors.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -176,7 +176,7 @@ class OpenAIClient:
             arr.append({
                 "type": "function",
                 "name": "save_memories",
-                "description": "Persist a batch of durable memories. Writes to DB and updates the guild's OpenAI Vector Store.",
+                "description": "Save important profile information to long-term memory. Store preferences, personality traits, interests, and background to personalize future interactions.",
                 "parameters": {
                     "type": "object",
                     "properties": {
