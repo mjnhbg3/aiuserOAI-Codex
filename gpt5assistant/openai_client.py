@@ -143,7 +143,7 @@ class OpenAIClient:
             arr.append({
                 "type": "function",
                 "name": "propose_memories",
-                "description": "Capture personal preferences, interests, traits, and context from natural conversation to build user profiles. Use when users mention likes/dislikes, personal facts, or notable behaviors.",
+                "description": "Automatically capture and stage personal information (preferences, interests, traits) mentioned in conversation to build comprehensive user profiles. Use whenever users share personal details, even casually.",
                 "parameters": {
                     "type": "object",
                     "properties": {
