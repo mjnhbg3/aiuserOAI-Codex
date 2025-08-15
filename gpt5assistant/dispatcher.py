@@ -653,7 +653,12 @@ class Dispatcher:
                     f"{sys_prompt_aug}\n\n"
                     "You have access to a memory system via file_search. When users ask about their preferences, "
                     "past conversations, or personal information they've shared, use the file_search tool to "
-                    "retrieve relevant memories before responding."
+                    "retrieve relevant memories before responding. IMPORTANT: When using retrieved memories, "
+                    "respond naturally as if recalling information about a friend. Don't quote the raw memory "
+                    "format or say 'you told me' - instead, integrate the knowledge into conversational responses "
+                    "that sound personal and natural. For example, if asked about their name and you retrieve "
+                    "'Legal name: Miles; nickname: Duke', respond like 'Your name is Duke, though your legal "
+                    "name is Miles' rather than quoting the stored format."
                 )
             # If code interpreter is enabled, politely discourage sandbox links in text
             if effective_tools.get("code_interpreter"):
