@@ -962,7 +962,78 @@ class GPT5Assistant(commands.Cog):
             opts.inline_file_ids = inline_file_ids or None
             opts.inline_image_ids = inline_image_ids or None
             opts.inline_image_urls = inline_image_urls or None
+            # Run a tools-aware call and then, if required, submit tool outputs
             result = await client.respond_collect(messages, opts, debug=True)
+
+            # Collect extra tool-call debug
+            diag_dbg: list[str] = []
+            raw = result.get("_raw_response")
+            # Detect required tool submission path
+            req = getattr(raw, 'required_action', None) if raw else None
+            if req is None and isinstance(raw, dict):
+                req = raw.get('required_action')
+            rtype = getattr(req, 'type', None) if req is not None else None
+            if rtype is None and isinstance(req, dict):
+                rtype = req.get('type')
+
+            # Parse tool calls for memory functions
+            tool_calls = []
+            if req and rtype == 'submit_tool_outputs':
+                sto = getattr(req, 'submit_tool_outputs', None)
+                if sto is None and isinstance(req, dict):
+                    sto = req.get('submit_tool_outputs')
+                tcs = getattr(sto, 'tool_calls', None) if sto is not None else None
+                if tcs is None and isinstance(sto, dict):
+                    tcs = sto.get('tool_calls')
+                if isinstance(tcs, list):
+                    for tc in tcs:
+                        if isinstance(tc, dict):
+                            tcid = tc.get('id')
+                            fn = tc.get('function') or {}
+                            tname = (fn.get('name') if isinstance(fn, dict) else None) or tc.get('name')
+                            targs = (fn.get('arguments') if isinstance(fn, dict) else None) or tc.get('arguments')
+                        else:
+                            tcid = getattr(tc, 'id', None)
+                            fn = getattr(tc, 'function', None)
+                            tname = getattr(fn, 'name', None) if fn else getattr(tc, 'name', None)
+                            targs = getattr(fn, 'arguments', None) if fn else getattr(tc, 'arguments', None)
+                        if tname in ("propose_memories", "save_memories"):
+                            if isinstance(targs, str):
+                                try:
+                                    parsed_args = json.loads(targs)
+                                except json.JSONDecodeError:
+                                    parsed_args = {}
+                            else:
+                                parsed_args = targs or {}
+                            tool_calls.append({"id": tcid, "name": tname, "arguments": parsed_args})
+                diag_dbg.append(f"diag: required_action with {len(tool_calls)} memory tool calls")
+
+            # Execute memory functions and submit outputs if present
+            if tool_calls:
+                dispatcher = await self._ensure_dispatcher()
+                outputs = []
+                for call in tool_calls:
+                    try:
+                        diag_dbg.append(f"diag: exec {call['name']} args={call['arguments']}")
+                        out = await dispatcher.function_handler.handle_function_call(
+                            call['name'], call['arguments'], str(ctx.guild.id), str(ctx.channel.id), str(ctx.author.id)
+                        )
+                        outputs.append({"tool_call_id": call["id"], "output": str(out)})
+                        diag_dbg.append(f"diag: result {out}")
+                    except Exception as e:
+                        outputs.append({"tool_call_id": call["id"], "output": f"Error: {e}"})
+                        diag_dbg.append(f"diag: error {e}")
+                try:
+                    cont = await client.submit_tool_outputs(previous_response_id=getattr(raw, 'id', None), tool_outputs=outputs, debug=True)
+                    # merge debug traces
+                    if isinstance(cont.get('debug'), list):
+                        diag_dbg.extend(cont['debug'])
+                    # replace result so downstream attachments reflect continuation
+                    result = cont
+                except Exception as e:
+                    diag_dbg.append(f"diag: submit_tool_outputs failed: {e}")
+
+            # Prepare final tools text
             ok_tools = result.get("text", "") or (f"[images: {len(result.get('images') or [])}]" if result.get("images") else "")
         except Exception as e:
             # Unwrap RetryError to original HTTP error where possible
@@ -1017,6 +1088,13 @@ class GPT5Assistant(commands.Cog):
                         memory_status += f" ({memory_count} memories)"
                     except Exception:
                         memory_status += " (error getting stats)"
+                    # Show or establish the memory vector store ID
+                    try:
+                        mem_vs_id = await dispatcher.memory_manager.get_vector_store_id(str(ctx.guild.id))
+                        if mem_vs_id:
+                            embed.add_field(name="Memory Vector Store", value=f"{mem_vs_id[:12]}…", inline=True)
+                    except Exception:
+                        pass
                         
                 embed.add_field(name="Memory System", value=memory_status, inline=True)
             except Exception as e:
@@ -1071,7 +1149,12 @@ class GPT5Assistant(commands.Cog):
                     except Exception:
                         continue
                 # Attach debug trace as a text file if present
+                # Merge diag_dbg into result.debug if present
                 dbg = result.get('debug')
+                if 'diag_dbg' in locals() and isinstance(diag_dbg, list) and diag_dbg:
+                    if not isinstance(dbg, list):
+                        dbg = []
+                    dbg.extend(diag_dbg)
                 if isinstance(dbg, list) and dbg:
                     try:
                         from io import BytesIO
