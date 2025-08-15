@@ -331,6 +331,230 @@ class GPT5Assistant(commands.Cog):
         else:
             await ctx.send("Use add <pattern> | remove <pattern> | list")
 
+    @gpt5_config.group(name="memory")
+    async def gpt5_config_memory(self, ctx: commands.Context) -> None:
+        """Configure long-term memory settings."""
+        pass
+
+    @gpt5_config_memory.command(name="enable")
+    @checks.admin_or_permissions(manage_guild=True)
+    async def gpt5_config_memory_enable(self, ctx: commands.Context) -> None:
+        """Enable long-term memory system."""
+        await self.config.guild(ctx.guild).memories_enabled.set(True)
+        await ctx.send("Memory system enabled.")
+
+    @gpt5_config_memory.command(name="disable") 
+    @checks.admin_or_permissions(manage_guild=True)
+    async def gpt5_config_memory_disable(self, ctx: commands.Context) -> None:
+        """Disable long-term memory system."""
+        await self.config.guild(ctx.guild).memories_enabled.set(False)
+        await ctx.send("Memory system disabled.")
+
+    @gpt5_config_memory.command(name="max_items")
+    @checks.admin_or_permissions(manage_guild=True)
+    async def gpt5_config_memory_max_items(self, ctx: commands.Context, count: int) -> None:
+        """Set maximum memories per function call (default: 50)."""
+        await self.config.guild(ctx.guild).memories_max_items_per_call.set(max(1, count))
+        await ctx.send(f"Maximum memories per call set to {max(1, count)}.")
+
+    @gpt5_config_memory.command(name="confidence_min")
+    @checks.admin_or_permissions(manage_guild=True)
+    async def gpt5_config_memory_confidence_min(self, ctx: commands.Context, confidence: float) -> None:
+        """Set minimum confidence threshold for memories (0.0-1.0, default: 0.4)."""
+        confidence = max(0.0, min(1.0, confidence))
+        await self.config.guild(ctx.guild).memories_confidence_min.set(confidence)
+        await ctx.send(f"Minimum confidence threshold set to {confidence}.")
+
+    @gpt5_config_memory.command(name="show")
+    async def gpt5_config_memory_show(self, ctx: commands.Context, scope: str = "user", target: str = None) -> None:
+        """Show memories for a user or channel. Usage: [p]gpt5 config memory show user @user OR channel #channel"""
+        # Import here to avoid circular imports
+        from .memory_storage import MemoryStorage
+        from .vector_store_manager import MemoryManager
+        
+        client = await self._ensure_client()
+        memory_manager = MemoryManager(client, self.config)
+        await memory_manager.initialize()
+        
+        guild_id = str(ctx.guild.id)
+        
+        if scope.lower() == "user":
+            if target:
+                # Parse user mention or ID
+                try:
+                    user_id = target.strip('<@!>')
+                    user = ctx.guild.get_member(int(user_id))
+                    if not user:
+                        await ctx.send("User not found.")
+                        return
+                except ValueError:
+                    await ctx.send("Invalid user mention or ID.")
+                    return
+            else:
+                user = ctx.author
+                user_id = str(user.id)
+                
+            memories = await memory_manager.storage.fetch_scope_memories(guild_id, "user", user_id)
+            title = f"User Memories: {user.display_name}"
+            
+        elif scope.lower() == "channel":
+            if target:
+                # Parse channel mention or ID
+                try:
+                    channel_id = target.strip('<#>')
+                    channel = ctx.guild.get_channel(int(channel_id))
+                    if not channel:
+                        await ctx.send("Channel not found.")
+                        return
+                except ValueError:
+                    await ctx.send("Invalid channel mention or ID.")
+                    return
+            else:
+                channel = ctx.channel
+                channel_id = str(channel.id)
+                
+            memories = await memory_manager.storage.fetch_scope_memories(guild_id, "channel", None, channel_id)
+            title = f"Channel Memories: #{channel.name}"
+            
+        else:
+            await ctx.send("Scope must be 'user' or 'channel'.")
+            return
+            
+        if not memories:
+            await ctx.send(f"No memories found for {scope}.")
+            return
+            
+        # Group by key and display
+        embed = discord.Embed(title=title, color=await ctx.embed_color())
+        
+        by_key = {}
+        for memory in memories[:20]:  # Limit to first 20
+            if memory.key not in by_key:
+                by_key[memory.key] = []
+            by_key[memory.key].append(memory)
+            
+        for key, key_memories in list(by_key.items())[:10]:  # Limit to 10 keys
+            values = []
+            for memory in key_memories[:3]:  # Limit to 3 values per key
+                confidence_str = f" ({memory.confidence:.2f})" if memory.confidence else ""
+                values.append(f"• {memory.value[:100]}{'...' if len(memory.value) > 100 else ''}{confidence_str}")
+            
+            embed.add_field(
+                name=key[:50], 
+                value="\n".join(values) or "No values",
+                inline=False
+            )
+            
+        embed.set_footer(text=f"Showing {len(by_key)} keys out of {len(memories)} total memories")
+        await ctx.send(embed=embed)
+
+    @gpt5_config_memory.command(name="clear")
+    @checks.admin_or_permissions(manage_guild=True)
+    async def gpt5_config_memory_clear(self, ctx: commands.Context, scope: str, target: str, key: str = None) -> None:
+        """Clear memories. Usage: [p]gpt5 config memory clear user @user [key] OR channel #channel [key]"""
+        # Import here to avoid circular imports
+        from .memory_storage import MemoryStorage
+        from .vector_store_manager import MemoryManager
+        
+        client = await self._ensure_client()
+        memory_manager = MemoryManager(client, self.config)
+        await memory_manager.initialize()
+        
+        guild_id = str(ctx.guild.id)
+        
+        if scope.lower() == "user":
+            try:
+                user_id = target.strip('<@!>')
+                user = ctx.guild.get_member(int(user_id))
+                if not user:
+                    await ctx.send("User not found.")
+                    return
+            except ValueError:
+                await ctx.send("Invalid user mention or ID.")
+                return
+                
+            deleted = await memory_manager.storage.delete_memories(guild_id, "user", user_id, None, key)
+            target_name = user.display_name
+            
+        elif scope.lower() == "channel":
+            try:
+                channel_id = target.strip('<#>')
+                channel = ctx.guild.get_channel(int(channel_id))
+                if not channel:
+                    await ctx.send("Channel not found.")
+                    return
+            except ValueError:
+                await ctx.send("Invalid channel mention or ID.")
+                return
+                
+            deleted = await memory_manager.storage.delete_memories(guild_id, "channel", None, channel_id, key)
+            target_name = f"#{channel.name}"
+            
+        else:
+            await ctx.send("Scope must be 'user' or 'channel'.")
+            return
+            
+        key_str = f" for key '{key}'" if key else ""
+        await ctx.send(f"Deleted {deleted} memories from {target_name}{key_str}.")
+
+    @gpt5_config_memory.command(name="stats")
+    async def gpt5_config_memory_stats(self, ctx: commands.Context) -> None:
+        """Show memory system statistics."""
+        # Import here to avoid circular imports
+        from .memory_storage import MemoryStorage
+        from .vector_store_manager import MemoryManager
+        
+        client = await self._ensure_client()
+        memory_manager = MemoryManager(client, self.config)
+        await memory_manager.initialize()
+        
+        guild_id = str(ctx.guild.id)
+        
+        # Get database stats
+        db_stats = await memory_manager.storage.get_guild_stats(guild_id)
+        
+        # Get vector store stats
+        vs_stats = await memory_manager.vector_manager.get_vector_store_stats(guild_id)
+        
+        embed = discord.Embed(title="Memory System Statistics", color=await ctx.embed_color())
+        
+        # Database stats
+        embed.add_field(
+            name="📊 Database",
+            value=f"User memories: {db_stats['user']}\n"
+                  f"Channel memories: {db_stats['channel']}\n"
+                  f"Total: {db_stats['total']}",
+            inline=True
+        )
+        
+        # Vector store stats
+        if vs_stats.get("error"):
+            embed.add_field(
+                name="🔍 Vector Store",
+                value=f"Error: {vs_stats['error']}",
+                inline=True
+            )
+        else:
+            embed.add_field(
+                name="🔍 Vector Store",
+                value=f"Files: {vs_stats.get('file_count', 0)}\n"
+                      f"Status: {vs_stats.get('status', 'unknown')}\n"
+                      f"Usage: {vs_stats.get('usage_bytes', 0)} bytes",
+                inline=True
+            )
+        
+        # Configuration
+        config = await self.config.guild(ctx.guild).all()
+        embed.add_field(
+            name="⚙️ Configuration",
+            value=f"Enabled: {config.get('memories_enabled', True)}\n"
+                  f"Max items/call: {config.get('memories_max_items_per_call', 50)}\n"
+                  f"Min confidence: {config.get('memories_confidence_min', 0.4)}",
+            inline=True
+        )
+        
+        await ctx.send(embed=embed)
+
     # Role/member/channel prompts removed in favor of a single global prompt.
 
     @gpt5.command(name="add")

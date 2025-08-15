@@ -17,6 +17,9 @@ from .utils.streaming import stream_text_buffered
 from .utils.classifiers import looks_like_image_request, looks_like_image_edit_request
 from .utils.variables import format_variables
 from .utils.filters import apply_removelist
+from .memory_storage import Memory
+from .vector_store_manager import MemoryManager
+from .function_handlers import FunctionCallHandler
 
 
 class Dispatcher:
@@ -26,6 +29,9 @@ class Dispatcher:
         self.client = client
         self._locks: dict[int, asyncio.Lock] = {}
         self._last_intent_warn: dict[int, float] = {}
+        self.memory_manager = MemoryManager(client, config)
+        self.function_handler = FunctionCallHandler(self.memory_manager)
+        self._memory_initialized = False
 
     def _get_lock(self, channel_id: int) -> asyncio.Lock:
         if channel_id not in self._locks:
@@ -244,10 +250,22 @@ class Dispatcher:
                             break
                 except Exception:
                     history_image_urls = []
-            # Determine vector store availability; disable file_search tool if none
+            # Initialize memory system if needed
+            if not self._memory_initialized:
+                await self.memory_manager.initialize()
+                self._memory_initialized = True
+            
+            # Determine vector store availability
             vector_store_id = gconf.get("file_kb_id") or None
             effective_tools = dict(gconf["tools"])  # shallow copy
-            if effective_tools.get("file_search"):
+            
+            # Enable file_search for memories if memories are enabled
+            if effective_tools.get("memories") and gconf.get("memories_enabled", True):
+                memory_vector_store_id = await self.memory_manager.get_vector_store_id(str(message.guild.id))
+                if memory_vector_store_id:
+                    effective_tools["file_search"] = True
+                    vector_store_id = memory_vector_store_id
+            elif effective_tools.get("file_search"):
                 # Do not use vector stores for files; only read current attachments
                 effective_tools["file_search"] = False
 

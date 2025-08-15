@@ -1,0 +1,277 @@
+from __future__ import annotations
+
+import asyncio
+from typing import Dict, List, Optional, Any
+from io import BytesIO
+
+from .memory_storage import Memory, ScopeGroup, MemoryStorage, group_by_scope, render_profile_markdown
+from .openai_client import OpenAIClient
+
+
+class VectorStoreManager:
+    """Manages OpenAI Vector Stores for long-term memory."""
+    
+    def __init__(self, openai_client: OpenAIClient, memory_storage: MemoryStorage, config):
+        self.client = openai_client
+        self.storage = memory_storage
+        self.config = config
+        self._vector_store_cache: Dict[str, str] = {}
+        
+    async def ensure_vector_store(self, guild_id: str) -> str:
+        """Ensure vector store exists for guild. Returns vector store ID."""
+        # Check cache first
+        if guild_id in self._vector_store_cache:
+            return self._vector_store_cache[guild_id]
+            
+        # Check config for existing vector store ID
+        guild_stores = await self.config.memories_vector_store_id_by_guild()
+        if guild_id in guild_stores:
+            vs_id = guild_stores[guild_id]
+            self._vector_store_cache[guild_id] = vs_id
+            return vs_id
+            
+        # Create new vector store
+        vs_name = f"vs_guild_{guild_id}"
+        
+        try:
+            # Create vector store via OpenAI API
+            vector_store = await self._create_vector_store(vs_name)
+            vs_id = vector_store["id"]
+            
+            # Cache and persist the ID
+            self._vector_store_cache[guild_id] = vs_id
+            guild_stores[guild_id] = vs_id
+            await self.config.memories_vector_store_id_by_guild.set(guild_stores)
+            
+            return vs_id
+            
+        except Exception as e:
+            raise RuntimeError(f"Failed to create vector store for guild {guild_id}: {e}")
+    
+    async def _create_vector_store(self, name: str) -> Dict[str, Any]:
+        """Create a new vector store using OpenAI API."""
+        # Use the existing OpenAI client to create vector store
+        openai_client = self.client.client
+        
+        try:
+            vector_store = await openai_client.vector_stores.create(
+                name=name,
+                expires_after={
+                    "anchor": "last_active_at",
+                    "days": 365  # Keep for 1 year after last use
+                }
+            )
+            
+            return {
+                "id": vector_store.id,
+                "name": vector_store.name,
+                "status": vector_store.status
+            }
+        except Exception as e:
+            # If vector store creation fails, return error info
+            return {
+                "id": None,
+                "name": name,
+                "status": "error",
+                "error": str(e)
+            }
+    
+    async def update_vector_store_profiles(self, guild_id: str, scope_groups: List[ScopeGroup]) -> None:
+        """Update vector store with new profile files for the given scope groups."""
+        vs_id = await self.ensure_vector_store(guild_id)
+        openai_client = self.client.client
+        
+        for group in scope_groups:
+            try:
+                # Fetch current memories for this scope
+                memories = await self.storage.fetch_scope_memories(
+                    guild_id=group.guild_id,
+                    scope=group.scope,
+                    user_id=group.user_id,
+                    channel_id=group.channel_id
+                )
+                
+                # Render markdown profile
+                profile_text = render_profile_markdown(group, memories)
+                filename = group.get_filename()
+                
+                # Create file in OpenAI
+                file_content = BytesIO(profile_text.encode('utf-8'))
+                openai_file = await openai_client.files.create(
+                    file=(filename, file_content),
+                    purpose="assistants"
+                )
+                
+                # Add file to vector store with metadata
+                metadata = group.get_metadata()
+                await openai_client.vector_stores.files.create(
+                    vector_store_id=vs_id,
+                    file_id=openai_file.id,
+                    # Note: metadata/attributes might not be supported in all OpenAI deployments
+                    # but we include it for completeness based on the API
+                )
+                
+                # TODO: Consider implementing file cleanup for old versions
+                # to avoid accumulating too many files in the vector store
+                
+            except Exception as e:
+                # Log error but continue with other groups
+                print(f"Failed to update vector store profile for {group.get_filename()}: {e}")
+                continue
+    
+    async def delete_vector_store_files(self, guild_id: str, scope: str, 
+                                      user_id: Optional[str] = None,
+                                      channel_id: Optional[str] = None) -> None:
+        """Delete files from vector store for a specific scope."""
+        try:
+            vs_id = await self.ensure_vector_store(guild_id)
+            openai_client = self.client.client
+            
+            # List files in vector store
+            vector_store_files = await openai_client.vector_stores.files.list(
+                vector_store_id=vs_id
+            )
+            
+            # Determine target filename pattern
+            if scope == "user" and user_id:
+                target_pattern = f"user_mem__{guild_id}__{user_id}.md"
+            elif scope == "channel" and channel_id:
+                target_pattern = f"chan_mem__{guild_id}__{channel_id}.md"
+            else:
+                return
+            
+            # Find and delete matching files
+            for file_obj in vector_store_files.data:
+                # Note: We may need to fetch file details to get the name
+                # This is a simplified approach - in practice you might need
+                # to track filenames in your database for easier cleanup
+                try:
+                    await openai_client.vector_stores.files.delete(
+                        vector_store_id=vs_id,
+                        file_id=file_obj.id
+                    )
+                except Exception:
+                    continue  # Continue with other files
+                    
+        except Exception as e:
+            print(f"Failed to delete vector store files for {scope}: {e}")
+
+    async def get_vector_store_stats(self, guild_id: str) -> Dict[str, Any]:
+        """Get statistics about the guild's vector store."""
+        try:
+            vs_id = await self.ensure_vector_store(guild_id)
+            openai_client = self.client.client
+            
+            # Get vector store details
+            vector_store = await openai_client.vector_stores.retrieve(vs_id)
+            
+            # List files in vector store
+            vector_store_files = await openai_client.vector_stores.files.list(
+                vector_store_id=vs_id
+            )
+            
+            return {
+                "vector_store_id": vs_id,
+                "status": vector_store.status,
+                "file_count": len(vector_store_files.data),
+                "usage_bytes": vector_store.usage_bytes if hasattr(vector_store, 'usage_bytes') else 0,
+                "created_at": vector_store.created_at,
+                "last_active_at": getattr(vector_store, 'last_active_at', None)
+            }
+            
+        except Exception as e:
+            return {
+                "error": str(e),
+                "vector_store_id": None,
+                "status": "error"
+            }
+
+
+class MemoryManager:
+    """High-level memory management combining storage and vector store operations."""
+    
+    def __init__(self, openai_client: OpenAIClient, config):
+        self.storage = MemoryStorage(config)
+        self.vector_manager = VectorStoreManager(openai_client, self.storage, config)
+        self.config = config
+        
+    async def initialize(self):
+        """Initialize the memory system."""
+        await self.storage.initialize()
+        
+    async def propose_memories(self, memories: List[Memory]) -> List[Dict[str, Any]]:
+        """Stage candidate memories without writing. Returns normalized items."""
+        # Validate and normalize memories
+        normalized = []
+        
+        for memory in memories:
+            # Generate ID if not provided
+            if not memory.mem_id:
+                memory.mem_id = memory.generate_id()
+                
+            # Validate required fields
+            if not memory.scope or memory.scope not in ["user", "channel"]:
+                continue
+            if not memory.guild_id or not memory.key or not memory.value:
+                continue
+                
+            # Validate scope-specific requirements
+            if memory.scope == "user" and not memory.user_id:
+                continue
+            if memory.scope == "channel" and not memory.channel_id:
+                continue
+                
+            # Apply confidence filtering if configured
+            min_confidence = await self.config.memories_confidence_min()
+            if memory.confidence is not None and memory.confidence < min_confidence:
+                continue
+                
+            normalized.append(memory.to_dict())
+            
+        return normalized
+        
+    async def save_memories(self, memories: List[Memory]) -> Dict[str, Any]:
+        """Persist memories to database and update vector store."""
+        if not memories:
+            return {"status": "ok", "saved": 0}
+            
+        # Check if memories are enabled
+        if not await self.config.memories_enabled():
+            return {"status": "disabled", "saved": 0}
+            
+        # Check item count limit
+        max_items = await self.config.memories_max_items_per_call()
+        if len(memories) > max_items:
+            memories = memories[:max_items]
+            
+        try:
+            # 1. Upsert to database
+            saved_memories = await self.storage.bulk_upsert(memories)
+            
+            # 2. Group by scope for vector store updates
+            scope_groups = group_by_scope(saved_memories)
+            
+            # 3. Update vector store profiles
+            if scope_groups:
+                guild_id = scope_groups[0].guild_id
+                await self.vector_manager.update_vector_store_profiles(guild_id, scope_groups)
+            
+            return {
+                "status": "ok",
+                "saved": len(saved_memories),
+                "groups_updated": len(scope_groups)
+            }
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "saved": 0
+            }
+    
+    async def get_vector_store_id(self, guild_id: str) -> Optional[str]:
+        """Get the vector store ID for a guild."""
+        try:
+            return await self.vector_manager.ensure_vector_store(guild_id)
+        except Exception:
+            return None

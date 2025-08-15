@@ -48,6 +48,12 @@ class GuildConfig(TypedDict, total=False):
     # Prompt overrides
     role_prompts: Dict[int, str]
     member_prompts: Dict[int, str]
+    # Memory system
+    memories_enabled: bool
+    memories_max_items_per_call: int
+    memories_max_profile_kb: int
+    memories_confidence_min: float
+    memories_vector_store_id_by_guild: Dict[str, str]
 
 
 DEFAULT_TOOLS: Dict[str, bool] = {
@@ -55,6 +61,7 @@ DEFAULT_TOOLS: Dict[str, bool] = {
     "file_search": False,
     "code_interpreter": False,
     "image": True,
+    "memories": True,
 }
 
 
@@ -93,4 +100,10 @@ DEFAULT_GUILD_CONFIG: GuildConfig = {
     "debug_attachments": False,
     "role_prompts": {},
     "member_prompts": {},
+    # Memory system defaults
+    "memories_enabled": True,
+    "memories_max_items_per_call": 50,
+    "memories_max_profile_kb": 10,
+    "memories_confidence_min": 0.4,
+    "memories_vector_store_id_by_guild": {},
 }

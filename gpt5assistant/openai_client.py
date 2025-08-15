@@ -137,6 +137,75 @@ class OpenAIClient:
                 "strict": True
             })
         
+        # Add memory function tools if memories are enabled
+        if tools.get("memories"):
+            # propose_memories - staging (no side effects)
+            arr.append({
+                "type": "function",
+                "name": "propose_memories",
+                "description": "Stage candidate memories (no write). Return items for possible revision/augmentation.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "scope": {"type": "string", "enum": ["user", "channel"]},
+                                    "guild_id": {"type": "string"},
+                                    "channel_id": {"type": "string"},
+                                    "user_id": {"type": "string"},
+                                    "key": {"type": "string"},
+                                    "value": {"type": "string"},
+                                    "source": {"type": "string", "enum": ["user_input", "web"]},
+                                    "confidence": {"type": "number"}
+                                },
+                                "required": ["scope", "guild_id", "key", "value", "source"],
+                                "additionalProperties": False
+                            }
+                        }
+                    },
+                    "required": ["items"],
+                    "additionalProperties": False
+                },
+                "strict": True
+            })
+            
+            # save_memories - commit (writes to DB & vector store)
+            arr.append({
+                "type": "function",
+                "name": "save_memories",
+                "description": "Persist a batch of durable memories. Writes to DB and updates the guild's OpenAI Vector Store.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "scope": {"type": "string", "enum": ["user", "channel"]},
+                                    "guild_id": {"type": "string"},
+                                    "channel_id": {"type": "string"},
+                                    "user_id": {"type": "string"},
+                                    "key": {"type": "string"},
+                                    "value": {"type": "string"},
+                                    "source": {"type": "string", "enum": ["user_input", "web"]},
+                                    "confidence": {"type": "number"},
+                                    "mem_id": {"type": "string", "description": "Optional idempotency key"}
+                                },
+                                "required": ["scope", "guild_id", "key", "value", "source"],
+                                "additionalProperties": False
+                            }
+                        }
+                    },
+                    "required": ["items"],
+                    "additionalProperties": False
+                },
+                "strict": True
+            })
+        
         return arr
 
     def _to_input(
