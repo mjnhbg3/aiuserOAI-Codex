@@ -189,7 +189,10 @@ class OpenAIClient:
         
         # Cache miss - generate tools array
         arr = self._build_tools_array_original(
-            tools, vector_store_id, code_container_type, include_python_sentinel
+            tools,
+            vector_store_id=vector_store_id,
+            code_container_type=code_container_type,
+            include_python_sentinel=include_python_sentinel
         )
         
         # Store in cache
