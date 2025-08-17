@@ -66,15 +66,15 @@ class Dispatcher:
             # 4. State flags (highly cacheable binary states)
             state_sig = f"{attachment_flags},{memory_flags}" if attachment_flags or memory_flags else "clean"
             
-            # 5. Build versioned cache key
-            cache_version = "v3"  # Increment when changing key format
-            cache_key = f"gpt5assistant:{cache_version}:tmpl={template_hash}:tools={tool_hash}:ctx={ctx_hash}:state={state_sig}:model={model}"
+            # 5. Build compact cache key (must be ≤64 chars for OpenAI)
+            cache_version = "v3"
+            cache_key = f"gpt5:{cache_version}:{template_hash[:8]}:{tool_hash[:6]}:{ctx_hash[:6]}:{model[:6]}"
             
-            # 6. Enforce reasonable key length (be conservative)
-            if len(cache_key) > 150:
-                # If too long, hash the entire key
-                overflow_hash = hashlib.sha256(cache_key.encode('utf-8')).hexdigest()[:24]
-                cache_key = f"gpt5assistant:{cache_version}:overflow={overflow_hash}"
+            # 6. Enforce OpenAI's 64-character limit
+            if len(cache_key) > 64:
+                # Hash entire key to fit within limit
+                full_hash = hashlib.sha256(cache_key.encode('utf-8')).hexdigest()[:32]
+                cache_key = f"gpt5:v3:{full_hash}"
             
             return cache_key
             
@@ -452,11 +452,18 @@ class Dispatcher:
             except Exception:
                 sys_prompt_global = gconf.get("system_prompt", "")
             
-            # Separate template into static and dynamic parts for caching optimization
+            # Check if variable separation would be beneficial (only if there are actually variables to separate)
             try:
                 static_template, dynamic_values = await separate_template_variables(message, sys_prompt_global or "")
-                # Build dynamic context as separate system message
-                dynamic_context = build_dynamic_context_message(dynamic_values)
+                
+                # Only use separation if it actually found variables to separate AND the original template is substantial
+                # This prevents token overhead when there's no caching benefit
+                if dynamic_values and len(sys_prompt_global or "") > 200:
+                    dynamic_context = build_dynamic_context_message(dynamic_values)
+                else:
+                    # Use traditional formatting for better token efficiency
+                    static_template = await format_variables(message, sys_prompt_global or "")
+                    dynamic_context = ""
             except Exception:
                 # Fallback to old behavior if separation fails
                 static_template = await format_variables(message, sys_prompt_global or "")
