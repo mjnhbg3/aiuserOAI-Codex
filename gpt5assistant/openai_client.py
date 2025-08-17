@@ -101,6 +101,8 @@ class ChatOptions:
     include_python_sentinel: bool = False
     # Previous response ID for threading
     previous_response_id: Optional[str] = None
+    # Cache key for token optimization
+    prompt_cache_key: Optional[str] = None
 
 
 class OpenAIClient:

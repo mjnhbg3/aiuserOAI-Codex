@@ -452,15 +452,15 @@ class Dispatcher:
             except Exception:
                 sys_prompt_global = gconf.get("system_prompt", "")
             
-            # Separate template into static and dynamic parts
-            static_template, dynamic_values = await separate_template_variables(message, sys_prompt_global or "")
-            
-            # Build dynamic context as separate system message
-            dynamic_context = build_dynamic_context_message(dynamic_values)
-            
-            # Fallback to old behavior if separation fails
-            if not static_template:
+            # Separate template into static and dynamic parts for caching optimization
+            try:
+                static_template, dynamic_values = await separate_template_variables(message, sys_prompt_global or "")
+                # Build dynamic context as separate system message
+                dynamic_context = build_dynamic_context_message(dynamic_values)
+            except Exception:
+                # Fallback to old behavior if separation fails
                 static_template = await format_variables(message, sys_prompt_global or "")
+                dynamic_context = ""
 
             # Gather recent channel history
             # Apply per-channel forget cutoff if set
@@ -488,11 +488,11 @@ class Dispatcher:
             )
             # Include current user's name in the message
             current_user_name = message.author.display_name or message.author.name
-            # Use separated prompts if available, otherwise fallback to original
-            if dynamic_context or static_template != (sys_prompt_global or ""):
+            # Use separated prompts if we have dynamic context, otherwise use original behavior
+            if dynamic_context:
                 msgs = build_messages_with_separated_prompts(static_template, dynamic_context, history, content, current_user_name)
             else:
-                # Fallback to original behavior
+                # Use original behavior - static_template should be the same as formatted prompt when no variables
                 system_prompt = static_template  # Use static_template as system_prompt
                 msgs = build_messages(system_prompt, history, content, current_user_name)
             # Collect a limited number of image attachments from recent history

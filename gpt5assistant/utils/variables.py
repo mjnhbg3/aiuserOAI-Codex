@@ -62,31 +62,44 @@ async def separate_template_variables(message: discord.Message, template: str) -
     
     Returns:
         Tuple of (static_template, dynamic_values)
-        - static_template: Template with variable placeholders for caching
+        - static_template: Template with variable placeholders for caching (or original if no variables)
         - dynamic_values: Actual variable values for dynamic context
     """
     
     if not template:
-        return "", {}
+        return template or "", {}
     
     static_template = template
     dynamic_values = {}
     
-    # Extract dynamic variables (time-based, changes frequently)
-    for var_name, var_func in DYNAMIC_VARIABLES.items():
-        if var_name in static_template:
-            dynamic_values[var_name] = var_func()
-            # Replace with placeholder for static template
-            placeholder = f"{{{{DYNAMIC_{var_name.strip('{}').upper()}}}}}"
-            static_template = static_template.replace(var_name, placeholder)
+    try:
+        # Extract dynamic variables (time-based, changes frequently)
+        for var_name, var_func in DYNAMIC_VARIABLES.items():
+            if var_name in static_template:
+                try:
+                    dynamic_values[var_name] = var_func()
+                    # Replace with placeholder for static template
+                    placeholder = f"{{{{DYNAMIC_{var_name.strip('{}').upper()}}}}}"
+                    static_template = static_template.replace(var_name, placeholder)
+                except Exception:
+                    # If variable extraction fails, skip this variable
+                    continue
+        
+        # Extract semi-dynamic variables (user/context-based, changes less frequently)
+        for var_name, var_func in SEMI_DYNAMIC_VARIABLES.items():
+            if var_name in static_template:
+                try:
+                    dynamic_values[var_name] = var_func(message)
+                    # Replace with placeholder for static template
+                    placeholder = f"{{{{CONTEXT_{var_name.strip('{}').upper()}}}}}"
+                    static_template = static_template.replace(var_name, placeholder)
+                except Exception:
+                    # If variable extraction fails, skip this variable
+                    continue
     
-    # Extract semi-dynamic variables (user/context-based, changes less frequently)
-    for var_name, var_func in SEMI_DYNAMIC_VARIABLES.items():
-        if var_name in static_template:
-            dynamic_values[var_name] = var_func(message)
-            # Replace with placeholder for static template
-            placeholder = f"{{{{CONTEXT_{var_name.strip('{}').upper()}}}}}"
-            static_template = static_template.replace(var_name, placeholder)
+    except Exception:
+        # If separation completely fails, return original template
+        return template, {}
     
     return static_template, dynamic_values
 
