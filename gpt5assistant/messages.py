@@ -22,6 +22,41 @@ def build_messages(system_prompt: str, history: List[Dict[str, str]], new_user: 
     return msgs
 
 
+def build_messages_with_separated_prompts(
+    static_template: str, 
+    dynamic_context: str, 
+    history: List[Dict[str, str]], 
+    new_user: str, 
+    current_user_name: str = None
+) -> List[Dict[str, Any]]:
+    """Build messages with separated static/dynamic system prompts for caching optimization"""
+    
+    msgs: List[Dict[str, Any]] = []
+    
+    # Add dynamic context as first system message (if present)
+    if dynamic_context and dynamic_context.strip():
+        msgs.append({
+            "role": "system",
+            "content": dynamic_context
+        })
+    
+    # Add conversation history
+    msgs.extend(history)
+    
+    # Add current user message
+    if new_user:
+        if current_user_name:
+            user_content = f"{current_user_name}: {new_user}"
+        else:
+            user_content = new_user
+        msgs.append({
+            "role": "user", 
+            "content": user_content
+        })
+    
+    return msgs
+
+
 def _token_counter():
     # Deprecated: token counting removed; retained for backward import safety
     return lambda _m, s: len(s) // 4

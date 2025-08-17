@@ -57,6 +57,8 @@ class GuildConfig(TypedDict, total=False):
     memories_vector_store_max_files: int
     memories_vector_store_id_by_guild: Dict[str, str]
     memories_consolidation_char_limit: int
+    # Token optimization settings
+    enable_response_storage: bool
 
 
 DEFAULT_TOOLS: Dict[str, bool] = {
@@ -112,4 +114,6 @@ DEFAULT_GUILD_CONFIG: GuildConfig = {
     "memories_vector_store_max_files": 8000,  # Utilize 1GB quota effectively (~800MB)
     "memories_vector_store_id_by_guild": {},
     "memories_consolidation_char_limit": 400,  # Max characters per consolidated memory
+    # Token optimization settings
+    "enable_response_storage": True,  # Enable caching by default for token savings
 }

@@ -6,17 +6,18 @@ from typing import Any, Dict, List, Optional
 from io import BytesIO
 import random
 import inspect
+import hashlib
 
 import discord
 from redbot.core import commands, Config
 
 from .config_schemas import DEFAULT_GUILD_CONFIG
-from .messages import build_messages, gather_history
+from .messages import build_messages, gather_history, build_messages_with_separated_prompts
 from .openai_client import ChatOptions, OpenAIClient
 from .utils.chunking import chunk_message
 from .utils.streaming import stream_text_buffered
 from .utils.classifiers import looks_like_image_request, looks_like_image_edit_request
-from .utils.variables import format_variables
+from .utils.variables import format_variables, separate_template_variables, build_dynamic_context_message
 from .utils.filters import apply_removelist
 from .memory_storage import Memory
 from .vector_store_manager import MemoryManager
@@ -33,6 +34,73 @@ class Dispatcher:
         self.memory_manager = MemoryManager(client, config, cog_instance)
         self.function_handler = FunctionCallHandler(self.memory_manager)
         self._memory_initialized = False
+    
+    def build_collision_resistant_cache_key(
+        self, 
+        static_template: str, 
+        tools_config: Dict[str, bool],
+        model: str,
+        channel_context: str = "",
+        attachment_flags: str = "",
+        memory_flags: str = ""
+    ) -> str:
+        """Build collision-resistant cache key with proper granularity"""
+        
+        try:
+            # 1. Template hash with collision resistance (16 chars = 2^64 possibilities)
+            template_hash = hashlib.sha256(static_template.encode('utf-8')).hexdigest()[:16]
+            
+            # 2. Tool signature with collision resistance
+            enabled_tools = sorted([k for k, v in tools_config.items() if v])
+            tools_string = ",".join(enabled_tools)
+            tool_hash = hashlib.sha256(tools_string.encode('utf-8')).hexdigest()[:12]
+            
+            # 3. Channel context hash (for channel-specific caching)
+            if channel_context and len(channel_context.strip()) > 0:
+                # Normalize channel context for better cache grouping
+                normalized_context = self._normalize_channel_context(channel_context)
+                ctx_hash = hashlib.sha256(normalized_context.encode('utf-8')).hexdigest()[:8]
+            else:
+                ctx_hash = "default"
+            
+            # 4. State flags (highly cacheable binary states)
+            state_sig = f"{attachment_flags},{memory_flags}" if attachment_flags or memory_flags else "clean"
+            
+            # 5. Build versioned cache key
+            cache_version = "v3"  # Increment when changing key format
+            cache_key = f"gpt5assistant:{cache_version}:tmpl={template_hash}:tools={tool_hash}:ctx={ctx_hash}:state={state_sig}:model={model}"
+            
+            # 6. Enforce reasonable key length (be conservative)
+            if len(cache_key) > 150:
+                # If too long, hash the entire key
+                overflow_hash = hashlib.sha256(cache_key.encode('utf-8')).hexdigest()[:24]
+                cache_key = f"gpt5assistant:{cache_version}:overflow={overflow_hash}"
+            
+            return cache_key
+            
+        except Exception as e:
+            # Fallback to basic key on any error
+            return f"gpt5assistant:fallback:{hashlib.sha256(str(e).encode()).hexdigest()[:16]}"
+
+    def _normalize_channel_context(self, context: str) -> str:
+        """Normalize channel context for better cache grouping"""
+        context_lower = context.lower().strip()
+        
+        # Group similar contexts for better cache hit rates
+        if any(keyword in context_lower for keyword in ["code", "programming", "dev", "technical"]):
+            return "coding_context"
+        elif any(keyword in context_lower for keyword in ["support", "help", "assistance"]):
+            return "support_context"
+        elif any(keyword in context_lower for keyword in ["game", "gaming", "play"]):
+            return "gaming_context"
+        elif any(keyword in context_lower for keyword in ["general", "chat", "casual"]):
+            return "general_context"
+        elif len(context_lower) > 100:
+            # Hash very long contexts
+            return f"custom_{hashlib.sha1(context.encode()).hexdigest()[:8]}"
+        else:
+            # Use context directly if short and doesn't match patterns
+            return context_lower.replace(" ", "_")[:30]
 
     def _get_lock(self, channel_id: int) -> asyncio.Lock:
         if channel_id not in self._locks:
@@ -378,12 +446,21 @@ class Dispatcher:
                     prefixes = [p for p in res if isinstance(p, str)]
             except Exception:
                 prefixes = []
-            # Single global system prompt with dynamic variables
+            # Separate static template from dynamic variables for caching optimization
             try:
                 sys_prompt_global = await self.config.system_prompt()
             except Exception:
                 sys_prompt_global = gconf.get("system_prompt", "")
-            system_prompt = await format_variables(message, sys_prompt_global or "")
+            
+            # Separate template into static and dynamic parts
+            static_template, dynamic_values = await separate_template_variables(message, sys_prompt_global or "")
+            
+            # Build dynamic context as separate system message
+            dynamic_context = build_dynamic_context_message(dynamic_values)
+            
+            # Fallback to old behavior if separation fails
+            if not static_template:
+                static_template = await format_variables(message, sys_prompt_global or "")
 
             # Gather recent channel history
             # Apply per-channel forget cutoff if set
@@ -411,7 +488,13 @@ class Dispatcher:
             )
             # Include current user's name in the message
             current_user_name = message.author.display_name or message.author.name
-            msgs = build_messages(system_prompt, history, content, current_user_name)
+            # Use separated prompts if available, otherwise fallback to original
+            if dynamic_context or static_template != (sys_prompt_global or ""):
+                msgs = build_messages_with_separated_prompts(static_template, dynamic_context, history, content, current_user_name)
+            else:
+                # Fallback to original behavior
+                system_prompt = static_template  # Use static_template as system_prompt
+                msgs = build_messages(system_prompt, history, content, current_user_name)
             # Collect a limited number of image attachments from recent history
             history_image_limit = int(gconf.get("images_backread", 0) or 0)
             history_image_urls: list[str] = []
@@ -637,20 +720,23 @@ class Dispatcher:
             except Exception:
                 code_container_type = None
 
-            # If current or replied-to attachments are present, gently steer the model
-            # to use them directly instead of referencing prior tool call IDs.
-            sys_prompt_aug = system_prompt
+            # Build augmented system prompt (for backwards compatibility and additional instructions)
+            # Use static template as base, since it's more cacheable
+            base_prompt = static_template
+            
+            additional_instructions = []
+            
+            # If current or replied-to attachments are present, add attachment instructions
             if (inline_image_urls or inline_image_ids or inline_file_ids):
-                sys_prompt_aug = (
-                    f"{system_prompt}\n\n"
+                additional_instructions.append(
                     "You have access to the user's current attachments in this turn. "
                     "If the user asks to describe or edit an image, use the provided input_image parts "
                     "as your source rather than referencing prior response or image IDs."
                 )
-            # If file_search is enabled for memories, instruct the model to use it for retrieving user information
+            
+            # If file_search is enabled for memories, add memory instructions
             if effective_tools.get("file_search") and vector_store_id:
-                sys_prompt_aug = (
-                    f"{sys_prompt_aug}\n\n"
+                additional_instructions.append(
                     "You have access to a memory system via file_search. When users ask about their preferences, "
                     "past conversations, or personal information they've shared, use the file_search tool to "
                     "retrieve relevant memories before responding. IMPORTANT: When using retrieved memories, "
@@ -660,13 +746,39 @@ class Dispatcher:
                     "'Legal name: Miles; nickname: Duke', respond like 'Your name is Duke, though your legal "
                     "name is Miles' rather than quoting the stored format."
                 )
-            # If code interpreter is enabled, politely discourage sandbox links in text
+            
+            # If code interpreter is enabled, add code instructions
             if effective_tools.get("code_interpreter"):
-                sys_prompt_aug = (
-                    f"{sys_prompt_aug}\n\n"
+                additional_instructions.append(
                     "When creating computational outputs or files, refer to files by name only; I will attach the actual files to the chat."
                 )
+            
+            # Build final system prompt
+            if additional_instructions:
+                sys_prompt_aug = f"{base_prompt}\n\n" + "\n\n".join(additional_instructions)
+            else:
+                sys_prompt_aug = base_prompt
 
+            # Get channel-specific context for cache key
+            channel_context = gconf.get("channel_contexts", {}).get(str(message.channel.id), "")
+            
+            # Build state flags for cache differentiation
+            attachment_flags = f"att={1 if (inline_image_urls or inline_image_ids or inline_file_ids) else 0}"
+            memory_flags = f"mem={1 if (effective_tools.get('file_search') and vector_store_id) else 0}"
+            
+            # Build collision-resistant cache key using static template
+            prompt_cache_key = self.build_collision_resistant_cache_key(
+                static_template=static_template,
+                tools_config=gconf.get("tools", {}),
+                model=gconf["model"],
+                channel_context=channel_context,
+                attachment_flags=attachment_flags,
+                memory_flags=memory_flags
+            )
+            
+            # Get storage setting for caching optimization
+            storage_enabled = gconf.get("enable_response_storage", True)
+            
             options = ChatOptions(
                 model=gconf["model"],
                 tools=effective_tools,
@@ -680,6 +792,7 @@ class Dispatcher:
                 inline_image_ids=inline_image_ids or None,
                 inline_image_urls=inline_image_urls or None,
                 code_container_type=code_container_type or None,
+                prompt_cache_key=prompt_cache_key,
             )
 
             sent_msg: Optional[discord.Message] = None
@@ -730,7 +843,11 @@ class Dispatcher:
                         )
                         
                         # Make first call
-                        first_result = await self.client.respond_collect(msgs, first_options)
+                        first_result = await self.client.respond_collect(
+                            msgs, first_options, 
+                            guild_id=str(message.guild.id), 
+                            storage_enabled=storage_enabled
+                        )
                         
                         # Check if model called the sentinel function
                         python_requested = False
@@ -750,13 +867,21 @@ class Dispatcher:
                         if python_requested:
                             # Model requested Python - make second call with code_interpreter enabled
                             # Completely ignore the first result and only use the second call
-                            result = await self.client.respond_collect(msgs, options)
+                            result = await self.client.respond_collect(
+                                msgs, options, 
+                                guild_id=str(message.guild.id), 
+                                storage_enabled=storage_enabled
+                            )
                         else:
                             # Model didn't request Python - use first result (no container charge)
                             result = first_result
                     else:
                         # code_interpreter not enabled, normal call
-                        result = await self.client.respond_collect(msgs, options)
+                        result = await self.client.respond_collect(
+                            msgs, options, 
+                            guild_id=str(message.guild.id), 
+                            storage_enabled=storage_enabled
+                        )
                 
                 # Process memory function calls if present
                 result = await self._process_memory_function_calls(result, msgs, options, str(message.guild.id), str(message.channel.id), str(message.author.id))

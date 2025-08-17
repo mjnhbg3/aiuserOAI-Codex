@@ -5,10 +5,80 @@ import base64
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, AsyncGenerator, Dict, Iterable, List, Optional
+import hashlib
+import threading
 
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 import time
+
+
+class ToolArrayCache:
+    """Thread-safe cache for tool array generation to reduce token overhead"""
+    
+    def __init__(self, maxsize: int = 64):
+        self._cache: Dict[str, List[Dict[str, Any]]] = {}
+        self._access_order: List[str] = []
+        self._lock = threading.RLock()
+        self._maxsize = maxsize
+        self._version = 1  # For cache invalidation
+    
+    def get_cache_key(self, tools: Dict[str, bool], vector_store_id: Optional[str], 
+                     container_type: Optional[str], include_sentinel: bool) -> str:
+        """Generate deterministic cache key"""
+        key_parts = [
+            f"v{self._version}",
+            f"tools={sorted([(k, v) for k, v in tools.items() if v])}",
+            f"vs={vector_store_id or 'none'}",
+            f"container={container_type or 'auto'}",
+            f"sentinel={include_sentinel}"
+        ]
+        cache_key = "|".join(key_parts)
+        return hashlib.sha256(cache_key.encode()).hexdigest()[:16]
+    
+    def get(self, tools: Dict[str, bool], vector_store_id: Optional[str], 
+           container_type: Optional[str], include_sentinel: bool) -> Optional[List[Dict[str, Any]]]:
+        """Get cached tool array"""
+        cache_key = self.get_cache_key(tools, vector_store_id, container_type, include_sentinel)
+        
+        with self._lock:
+            if cache_key in self._cache:
+                # Move to end (LRU)
+                self._access_order.remove(cache_key)
+                self._access_order.append(cache_key)
+                # Return deep copy to prevent mutation
+                import copy
+                return copy.deepcopy(self._cache[cache_key])
+        
+        return None
+    
+    def put(self, tools: Dict[str, bool], vector_store_id: Optional[str], 
+           container_type: Optional[str], include_sentinel: bool, 
+           tool_array: List[Dict[str, Any]]) -> None:
+        """Store tool array in cache"""
+        cache_key = self.get_cache_key(tools, vector_store_id, container_type, include_sentinel)
+        
+        with self._lock:
+            # Evict oldest if at capacity
+            if len(self._cache) >= self._maxsize and cache_key not in self._cache:
+                oldest_key = self._access_order.pop(0)
+                del self._cache[oldest_key]
+            
+            # Store deep copy
+            import copy
+            self._cache[cache_key] = copy.deepcopy(tool_array)
+            
+            # Update access order
+            if cache_key in self._access_order:
+                self._access_order.remove(cache_key)
+            self._access_order.append(cache_key)
+    
+    def invalidate_all(self) -> None:
+        """Clear all cached entries (when config changes)"""
+        with self._lock:
+            self._version += 1
+            self._cache.clear()
+            self._access_order.clear()
 
 
 @dataclass
@@ -38,6 +108,7 @@ class OpenAIClient:
         self.client = AsyncOpenAI(api_key=api_key, timeout=timeout)
         self._api_key = api_key
         self._base_url = "https://api.openai.com/v1"
+        self._tool_cache = ToolArrayCache(maxsize=64)  # Tool array cache for token savings
 
     async def _fetch_container_file(self, container_id: str, file_id: str) -> Optional[bytes]:
         """Download bytes for a container file via the containers API.
@@ -98,6 +169,35 @@ class OpenAIClient:
                 continue
 
     def _tools_array(
+        self,
+        tools: Dict[str, bool],
+        *,
+        vector_store_id: Optional[str],
+        code_container_type: Optional[str] = None,
+        include_python_sentinel: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Get tools array with caching for token optimization"""
+        
+        # Try cache first
+        cached_result = self._tool_cache.get(
+            tools, vector_store_id, code_container_type, include_python_sentinel
+        )
+        if cached_result is not None:
+            return cached_result
+        
+        # Cache miss - generate tools array
+        arr = self._build_tools_array_original(
+            tools, vector_store_id, code_container_type, include_python_sentinel
+        )
+        
+        # Store in cache
+        self._tool_cache.put(
+            tools, vector_store_id, code_container_type, include_python_sentinel, arr
+        )
+        
+        return arr
+    
+    def _build_tools_array_original(
         self,
         tools: Dict[str, bool],
         *,
@@ -279,6 +379,9 @@ class OpenAIClient:
         self,
         messages: List[Dict[str, Any]],
         options: ChatOptions,
+        *,
+        guild_id: Optional[str] = None,
+        storage_enabled: bool = True,
     ) -> AsyncGenerator[str, None]:
         if not hasattr(self.client, "responses"):
             raise RuntimeError(
@@ -317,11 +420,15 @@ class OpenAIClient:
             "max_output_tokens": options.max_tokens,
             "tool_choice": "auto",
             "instructions": options.system_prompt,
+            "store": storage_enabled,  # Enable/disable response storage for caching
         }
         
-        # Add previous_response_id for threading if provided
-        if options.previous_response_id:
-            create_params["previous_response_id"] = options.previous_response_id
+        # Add cache key and previous_response_id if storage enabled
+        if storage_enabled:
+            if options.prompt_cache_key:
+                create_params["prompt_cache_key"] = options.prompt_cache_key
+            if options.previous_response_id:
+                create_params["previous_response_id"] = options.previous_response_id
         
         resp = await self.client.responses.create(**create_params)
         # Extract output text robustly across SDK variants
@@ -367,6 +474,8 @@ class OpenAIClient:
         options: ChatOptions,
         *,
         debug: bool = False,
+        guild_id: Optional[str] = None,
+        storage_enabled: bool = True,
     ) -> Dict[str, Any]:
         if not hasattr(self.client, "responses"):
             raise RuntimeError(
@@ -411,11 +520,15 @@ class OpenAIClient:
             "max_output_tokens": options.max_tokens,
             "tool_choice": "auto",
             "instructions": options.system_prompt,
+            "store": storage_enabled,  # Enable/disable response storage for caching
         }
         
-        # Add previous_response_id for threading if provided
-        if options.previous_response_id:
-            create_params["previous_response_id"] = options.previous_response_id
+        # Add cache key and previous_response_id if storage enabled
+        if storage_enabled:
+            if options.prompt_cache_key:
+                create_params["prompt_cache_key"] = options.prompt_cache_key
+            if options.previous_response_id:
+                create_params["previous_response_id"] = options.previous_response_id
         
         resp = await self.client.responses.create(**create_params)
 

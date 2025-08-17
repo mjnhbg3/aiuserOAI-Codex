@@ -150,7 +150,13 @@ class GPT5Assistant(commands.Cog):
         val = action == "enable"
         current[tool] = val
         await self.config.guild(ctx.guild).tools.set(current)
-        await ctx.send(f"Tool {tool} {'enabled' if val else 'disabled'}.")
+        
+        # Clear tool cache when tool configuration changes
+        client = await self._ensure_client()
+        if hasattr(client, '_tool_cache'):
+            client._tool_cache.invalidate_all()
+        
+        await ctx.send(f"Tool {tool} {'enabled' if val else 'disabled'}. Cache cleared.")
 
     @gpt5_config.command(name="channels")
     async def gpt5_config_channels(self, ctx: commands.Context, action: str, channel: Optional[discord.TextChannel] = None) -> None:
@@ -728,6 +734,30 @@ class GPT5Assistant(commands.Cog):
         await self.config.guild(ctx.guild).random_rate.set(rate)
         await ctx.send(f"Random autoreply rate set to {rate}.")
 
+    @gpt5_config.command(name="storage")
+    async def gpt5_config_storage(self, ctx: commands.Context, value: str) -> None:
+        """Enable/disable response storage for caching optimization.
+        
+        When enabled: Responses cached on OpenAI servers for 30 days (better performance, lower costs)
+        When disabled: No caching, higher token costs, but no data retention
+        
+        Usage: [p]gpt5 config storage on|off
+        """
+        flag = value.lower() in {"on", "true", "1", "enable", "enabled"}
+        await self.config.guild(ctx.guild).enable_response_storage.set(flag)
+        
+        # Clear tool cache when storage settings change to ensure consistency
+        client = await self._ensure_client()
+        if hasattr(client, '_tool_cache'):
+            client._tool_cache.invalidate_all()
+        
+        if flag:
+            privacy_note = "⚠️ Responses will be stored on OpenAI servers for 30 days for caching optimization."
+        else:
+            privacy_note = "✅ No response storage, but higher token costs and no caching benefits."
+        
+        await ctx.send(f"Response storage {'enabled' if flag else 'disabled'}. {privacy_note}")
+
     @gpt5_config.group(name="history")
     async def gpt5_config_history(self, ctx: commands.Context) -> None:
         """Configure chat history window (backread only)."""
@@ -1122,6 +1152,44 @@ class GPT5Assistant(commands.Cog):
 
         # Send embed first
         await ctx.send(embed=embed)
+
+    @gpt5.command(name="cache_info")
+    @checks.admin_or_permissions(manage_guild=True)
+    async def gpt5_cache_info(self, ctx: commands.Context) -> None:
+        """Show cache key information for debugging"""
+        
+        try:
+            # Get current configuration
+            gconf = await self.config.guild(ctx.guild).all()
+            
+            # Build sample cache key
+            dispatcher = await self._ensure_dispatcher()
+            sample_template = await self.config.system_prompt()
+            
+            sample_cache_key = dispatcher.build_collision_resistant_cache_key(
+                static_template=sample_template or "default",
+                tools_config=gconf.get("tools", {}),
+                model=gconf.get("model", "gpt-4o"),
+                channel_context=gconf.get("channel_contexts", {}).get(str(ctx.channel.id), ""),
+                attachment_flags="att=0",
+                memory_flags="mem=0"
+            )
+            
+            embed = discord.Embed(title="Cache Key Information", color=await ctx.embed_color())
+            embed.add_field(name="Sample Cache Key", value=f"```{sample_cache_key}```", inline=False)
+            embed.add_field(name="Key Length", value=f"{len(sample_cache_key)} characters", inline=True)
+            embed.add_field(name="Storage Enabled", value=f"{gconf.get('enable_response_storage', True)}", inline=True)
+            
+            # Tool cache stats
+            client = await self._ensure_client()
+            if hasattr(client, '_tool_cache'):
+                cache_size = len(client._tool_cache._cache)
+                embed.add_field(name="Tool Cache Entries", value=f"{cache_size}", inline=True)
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            await ctx.send(f"Error analyzing cache key: {e}")
 
         # If tools run produced images/files, attach them so users can see them inline
         try:
