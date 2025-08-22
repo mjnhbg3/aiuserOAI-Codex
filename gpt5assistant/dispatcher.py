@@ -165,13 +165,16 @@ class Dispatcher:
             except Exception:
                 is_reply_to_bot = False
 
-        prob = random.random()
-        should_reply = (
-            mentioned
-            or is_reply_to_bot
-            or (random_autoreply and (prob < max(0.0, min(1.0, random_rate))))
-            or (prob < max(0.0, min(1.0, reply_percent)))
-        )
+        # Always reply to mentions and replies to bot
+        if mentioned or is_reply_to_bot:
+            should_reply = True
+        else:
+            # For non-mention/non-reply messages, use random chances
+            prob = random.random()
+            should_reply = (
+                (random_autoreply and (prob < max(0.0, min(1.0, random_rate))))
+                or (prob < max(0.0, min(1.0, reply_percent)))
+            )
         if not should_reply:
             return
 
