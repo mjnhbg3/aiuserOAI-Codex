@@ -849,11 +849,11 @@ class Dispatcher:
                             include_python_sentinel=True,  # Include sentinel function
                         )
                         
-                        # Make first call
+                        # Make first call (disable storage to prevent double processing)
                         first_result = await self.client.respond_collect(
                             msgs, first_options, 
                             guild_id=str(message.guild.id), 
-                            storage_enabled=storage_enabled
+                            storage_enabled=False  # Disable storage for first call to prevent duplication
                         )
                         
                         # Check if model called the sentinel function
@@ -961,10 +961,10 @@ class Dispatcher:
                     )
                 # If we need to replace sandbox links, post attachments first to get working URLs
                 name_to_url: dict[str, str] = {}
+                # Track which images we've sent to avoid duplicates (global for this function scope)
+                sent_image_hashes = set()
                 if refs and (images or files):
                     # Send images with filenames matching referenced names when possible
-                    # Track which images we've sent to avoid duplicates
-                    sent_image_hashes = set()
                     for idx, img in enumerate(images):
                         try:
                             # Check if this image was already sent
@@ -1094,6 +1094,20 @@ class Dispatcher:
                     for idx, img in enumerate(images):
                         file = discord.File(BytesIO(img), filename=f"image_{idx+1}.png")
                         await message.channel.send(file=file)
+                elif refs and images:
+                    # When sandbox refs exist, check if any images weren't sent during pre-processing
+                    from hashlib import sha256
+                    for idx, img in enumerate(images):
+                        try:
+                            img_hash = sha256(img).hexdigest()
+                            if img_hash not in sent_image_hashes:
+                                # This image wasn't sent during ref processing, send it now
+                                file = discord.File(BytesIO(img), filename=f"image_{idx+1}.png")
+                                await message.channel.send(file=file)
+                        except Exception:
+                            # If hashing fails, send the image to be safe
+                            file = discord.File(BytesIO(img), filename=f"image_{idx+1}.png")
+                            await message.channel.send(file=file)
                     for item in files:
                         try:
                             name = item.get("name") or "attachment.bin"
