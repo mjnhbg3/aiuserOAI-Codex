@@ -145,10 +145,8 @@ class Dispatcher:
             if any(isinstance(p, str) and p and (message.content or "").startswith(p) for p in prefixes):
                 return
 
-        # Decide whether to reply: mention, replies, RNG, or reply_percent
+        # Decide whether to reply: mention, replies, or reply_percent
         respond_on_mention = gconf.get("respond_on_mention", True)
-        random_autoreply = gconf.get("random_autoreply", False)
-        random_rate = float(gconf.get("random_rate", 0.0) or 0.0)
         reply_percent = float(gconf.get("reply_percent", 0.5) or 0.0)
         reply_to_mentions_replies = bool(gconf.get("reply_to_mentions_replies", True))
 
@@ -169,12 +167,9 @@ class Dispatcher:
         if mentioned or is_reply_to_bot:
             should_reply = True
         else:
-            # For non-mention/non-reply messages, use random chances
+            # For non-mention/non-reply messages, use reply_percent
             prob = random.random()
-            should_reply = (
-                (random_autoreply and (prob < max(0.0, min(1.0, random_rate))))
-                or (prob < max(0.0, min(1.0, reply_percent)))
-            )
+            should_reply = prob < max(0.0, min(1.0, reply_percent))
         if not should_reply:
             return
 

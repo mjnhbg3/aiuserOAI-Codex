@@ -25,8 +25,6 @@ class GuildConfig(TypedDict, total=False):
     file_kb_id: Optional[str]
     file_ids: List[str]
     respond_on_mention: bool
-    random_autoreply: bool
-    random_rate: float
     history_turns: int
     history_chars: int
     include_others: bool
@@ -85,8 +83,6 @@ DEFAULT_GUILD_CONFIG: GuildConfig = {
     "file_kb_id": None,
     "file_ids": [],
     "respond_on_mention": True,
-    "random_autoreply": False,
-    "random_rate": 0.02,
     "history_turns": 8,
     "history_chars": 6000,
     "include_others": True,

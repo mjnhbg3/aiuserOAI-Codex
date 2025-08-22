@@ -64,7 +64,7 @@ class GPT5Assistant(commands.Cog):
             f"Tools: {tools}\nMax tokens: {g['max_tokens']} Temp: {g['temperature']}\n"
             f"Ephemeral: {g['ephemeral']} Allowed channels: {len(g['allowed_channels'])}\n"
             f"Respond on mention: {g.get('respond_on_mention', True)}\n"
-            f"Random autoreply: {g.get('random_autoreply', False)} rate={g.get('random_rate', 0.0)}\n"
+            f"Reply percent: {g.get('reply_percent', 0.5)*100:.0f}%\n"
             f"History: backread_msgs={g.get('messages_backread', 25)} backread_images={g.get('images_backread', 0)} backread_seconds={g.get('messages_backread_seconds', 1800)} backread_images_seconds={g.get('images_backread_seconds', 1800)} include_others={g.get('include_others', True)}"
         )
 
@@ -630,10 +630,9 @@ class GPT5Assistant(commands.Cog):
         embed.add_field(
             name="Replying",
             value=(
-                f"reply_percent=`{g.get('reply_percent', 0.0):.2f}`\n"
+                f"reply_percent=`{g.get('reply_percent', 0.0)*100:.0f}%`\n"
                 f"reply_mentions=`{g.get('reply_to_mentions_replies', True)}`\n"
-                f"respond_on_mention=`{g.get('respond_on_mention', True)}`\n"
-                f"random_autoreply=`{g.get('random_autoreply', False)}` rate=`{g.get('random_rate', 0.0):.2f}`"
+                f"respond_on_mention=`{g.get('respond_on_mention', True)}`"
             ),
             inline=False,
         )
@@ -708,31 +707,19 @@ class GPT5Assistant(commands.Cog):
 
     @gpt5_config.command(name="triggers")
     async def gpt5_config_triggers(self, ctx: commands.Context, which: str, value: str) -> None:
-        """Set triggers: mention on/off, random on/off.
+        """Set mention trigger: mention on/off.
 
         Example: [p]gpt5 config triggers mention on
-                 [p]gpt5 config triggers random off
         """
         which = which.lower()
         value = value.lower()
-        if which not in {"mention", "random"}:
-            await ctx.send("Use which=mention|random and value=on|off.")
+        if which != "mention":
+            await ctx.send("Use which=mention and value=on|off.")
             return
         flag = value in {"on", "true", "1", "enable", "enabled"}
-        if which == "mention":
-            await self.config.guild(ctx.guild).respond_on_mention.set(flag)
-        else:
-            await self.config.guild(ctx.guild).random_autoreply.set(flag)
+        await self.config.guild(ctx.guild).respond_on_mention.set(flag)
         await ctx.send(f"Trigger {which} set to {'on' if flag else 'off'}.")
 
-    @gpt5_config.command(name="rngrate")
-    async def gpt5_config_rngrate(self, ctx: commands.Context, rate: float) -> None:
-        """Set random autoreply rate between 0.0 and 1.0."""
-        if not (0.0 <= rate <= 1.0):
-            await ctx.send("Rate must be between 0.0 and 1.0")
-            return
-        await self.config.guild(ctx.guild).random_rate.set(rate)
-        await ctx.send(f"Random autoreply rate set to {rate}.")
 
     @gpt5_config.command(name="storage")
     async def gpt5_config_storage(self, ctx: commands.Context, value: str) -> None:
