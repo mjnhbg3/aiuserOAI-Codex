@@ -455,8 +455,8 @@ class Dispatcher:
                 static_template, dynamic_values = await separate_template_variables(message, sys_prompt_global or "")
                 
                 # Only use separation if it actually found variables to separate AND the original template is substantial
-                # This prevents token overhead when there's no caching benefit
-                if dynamic_values and len(sys_prompt_global or "") > 200:
+                # Always separate variables for better caching regardless of length
+                if dynamic_values:
                     dynamic_context = build_dynamic_context_message(dynamic_values)
                 else:
                     # Use traditional formatting for better token efficiency
