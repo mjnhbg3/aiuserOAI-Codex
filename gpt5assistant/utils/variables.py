@@ -27,7 +27,7 @@ async def format_variables(ctx_message: discord.Message, text: str) -> str:
         "{randomnumber}": str(__import__("random").randint(0, 100)),
     }
     if guild and guild.emojis:
-        variables["{serveremojis}"] = " ".join(str(e) for e in guild.emojis[:50])
+        variables["{serveremojis}"] = " ".join(str(e) for e in guild.emojis[:5])
     else:
         variables["{serveremojis}"] = ""
 
